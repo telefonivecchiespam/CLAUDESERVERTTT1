@@ -147,7 +147,9 @@
                 case 'chess_game_start':
                     mySymbol = msg.symbol;
                     opponent = msg.opponent;
-                    currentPlayer = mySymbol; // sync turn
+                    // Chess always starts with White to move, regardless of which
+                    // color *I* am - don't confuse "my symbol" with "whose turn it is".
+                    currentPlayer = 'white';
                     // Update status – only show waiting if we haven't got an opponent yet
                     if (opponent) {
                         status.textContent = (mySymbol === 'white' ? 'You are White' : 'You are Black') + ' (Opponent: ' + opponent + ')';
@@ -180,7 +182,9 @@
                     break;
                 case 'opponent_left':
                     status.textContent = 'Opponent disconnected';
+                    status.style.color = '#d00';
                     gameOver = true;
+                    renderBoard();
                     if (window.appLog) window.appLog('WARN_CHESS', 'Opponent disconnected');
                     break;
                 case 'error':
