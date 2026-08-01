@@ -160,16 +160,17 @@
                     }
                     break;
                 case 'chess_move':
+                    // executeMove() already sets the correct status text itself
+                    // (whose turn it is, check, checkmate, stalemate) - don't
+                    // clobber it with a generic "Your turn" afterwards.
                     executeMove(msg.fromRow, msg.fromCol, msg.toRow, msg.toCol);
-                    currentPlayer = mySymbol;
-                    status.textContent = 'Your turn (' + mySymbol + ')';
                     break;
                 case 'game_over':
                     status.textContent = msg.winner === mySymbol ? 'You win!' : (msg.winner === 'draw' ? "It's a draw!" : 'You lose');
                     if (window.appLog) window.appLog('INFO_CHESS', 'Game over: ' + status.textContent);
                     break;
                 case 'turn':
-                    if (msg.currentPlayer !== mySymbol) {
+                    if (!gameOver && msg.currentPlayer !== mySymbol) {
                         status.textContent = "Opponent's turn";
                     }
                     break;
@@ -295,6 +296,7 @@
 
         // ===== Click Handler =====
         function handleSquareClick(e) {
+            if (gameOver) return;
             const row = parseInt(e.currentTarget.dataset.row);
             const col = parseInt(e.currentTarget.dataset.col);
             const piece = board[row][col];
