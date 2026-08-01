@@ -1,0 +1,4 @@
+❯ connection refused from  eaglercraft.com soooooooo can you do something like to make the browser just be like a webpage search from your main browser
+  (window opened in chrome open a pip browser (we are using chrome for this example so chrome)in the window) or add an error page that explains it to    
+  you and has a button to open the website in a new tab (IE style like this                                                                              
+  https://www.deskdecode.com/wp-content/uploads/2016/09/Internet-Explorer-Cannot-Display-The-Webpage.jpg )

@@ -1,0 +1,138 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Windows 7 Clone</title>
+    <link rel="stylesheet" href="css/reset.css">
+    <link rel="stylesheet" href="css/aero.css">
+    <link rel="stylesheet" href="css/apps.css">
+</head>
+<body>
+    <!-- Desktop -->
+    <div id="desktop" class="desktop">
+        <div class="wallpaper"></div>
+        <!-- Desktop Icons -->
+        <div class="desktop-icon" data-app="notepad">
+            <div class="icon-img">📝</div>
+            <div class="icon-label">Notepad</div>
+        </div>
+        <div class="desktop-icon" data-app="browser">
+            <div class="icon-img">🌐</div>
+            <div class="icon-label">Browser</div>
+        </div>
+        <div class="desktop-icon" data-app="solitaire">
+            <div class="icon-img">🃏</div>
+            <div class="icon-label">Solitaire</div>
+        </div>
+        <div class="desktop-icon" data-app="minesweeper">
+            <div class="icon-img">💣</div>
+            <div class="icon-label">Minesweeper</div>
+        </div>
+        <div class="desktop-icon" data-app="computer">
+            <div class="icon-img">💻</div>
+            <div class="icon-label">Computer</div>
+        </div>
+        <div class="desktop-icon" data-app="recycle">
+            <div class="icon-img">🗑️</div>
+            <div class="icon-label">Recycle Bin</div>
+        </div>
+        <div class="desktop-icon" data-app="log">
+            <div class="icon-img">📋</div>
+            <div class="icon-label">App Log</div>
+        </div>
+        <div class="desktop-icon" data-app="tictactoe">
+            <div class="icon-img">❌⭕</div>
+            <div class="icon-label">TicTacToe</div>
+        </div>
+        <div class="desktop-icon" data-app="chess">
+            <div class="icon-img">♔</div>
+            <div class="icon-label">Chess</div>
+        </div>
+        <div class="desktop-icon" data-app="chat">
+            <div class="icon-img">💬</div>
+            <div class="icon-label">Chat</div>
+        </div>
+    </div>
+
+    <!-- Taskbar -->
+    <div id="taskbar" class="taskbar">
+        <div id="start-btn" class="start-btn">
+            <span class="start-orb"></span>
+            <span class="start-text">Start</span>
+        </div>
+        <div id="quick-launch" class="quick-launch"></div>
+        <div id="taskbar-items" class="taskbar-items"></div>
+        <div id="system-tray" class="system-tray">
+            <span id="clock" class="clock">00:00</span>
+        </div>
+    </div>
+
+    <!-- Start Menu -->
+    <div id="start-menu" class="start-menu">
+        <div class="start-menu-left">
+            <div class="start-menu-user">
+                <div class="user-icon">👤</div>
+                <div class="user-name">User</div>
+            </div>
+            <div class="start-menu-items">
+                <div class="menu-item" data-app="notepad">📝 Notepad</div>
+                <div class="menu-item" data-app="browser">🌐 Browser</div>
+                <div class="menu-item" data-app="solitaire">🃏 Solitaire</div>
+                <div class="menu-item" data-app="minesweeper">💣 Minesweeper</div>
+                <div class="menu-item" data-app="tictactoe">❌⭕ Tic Tac Toe</div>
+                <div class="menu-item" data-app="chess">♔ Chess</div>
+                <div class="menu-item" data-app="chat">💬 Chat</div>
+            </div>
+        </div>
+        <div class="start-menu-right">
+            <div class="menu-section-title">Windows</div>
+            <div class="menu-large-item" data-app="computer">
+                <div class="large-icon">💻</div>
+                <div class="large-label">Computer</div>
+            </div>
+            <div class="menu-large-item" data-app="recycle">
+                <div class="large-icon">🗑️</div>
+                <div class="large-label">Recycle Bin</div>
+            </div>
+            <div class="menu-large-item" data-app="log">
+                <div class="large-icon">📋</div>
+                <div class="large-label">App Log</div>
+            </div>
+            <div class="menu-large-item" data-app="notepad">
+                <div class="large-icon">📝</div>
+                <div class="large-label">Notepad</div>
+            </div>
+            <div class="menu-section-title">Turn Off Computer</div>
+            <div class="menu-large-item shutdown">
+                <div class="large-icon">⏏️</div>
+                <div class="large-label">Shut down</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Window Container -->
+    <div id="window-container"></div>
+
+    <!-- App Log Container -->
+    <div id="app-log" style="position:fixed; bottom:40px; right:10px; width:300px; max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.8); color:#fff; font-size:12px; padding:5px; z-index:9999; border-radius:4px;">
+        <div style="font-weight:bold; margin-bottom:5px; border-bottom:1px solid #555;">App Log</div>
+    </div>
+
+    <script src="js/window-manager.js"></script>
+    <script src="js/start-menu.js"></script>
+    <script src="js/taskbar.js"></script>
+    <script src="js/apps/notepad.js"></script>
+    <script src="js/apps/browser.js"></script>
+    <script src="js/apps/solitaire.js"></script>
+    <script src="js/apps/minesweeper.js"></script>
+    <script src="js/apps/computer.js"></script>
+    <script src="js/apps/log.js"></script>
+    <script src="js/apps/tictactoe.js"></script>
+    <script src="js/apps/chess.js"></script>
+    <script>window.CHAT_WS_URL = 'wss://server-chat-claudeserverettt1.onrender.com';</script>
+    <script src="js/apps/chat.js"></script>
+    <script src="js/desktop-icons.js"></script>
+</body>
+</html>

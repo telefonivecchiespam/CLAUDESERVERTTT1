@@ -1,0 +1,331 @@
+/* Windows 7 Aero Glass Styles */
+
+/* Desktop */
+.desktop {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: linear-gradient(to bottom, #0078D7, #000000);
+    overflow: hidden;
+    z-index: 0;
+}
+
+.wallpaper {
+    position: absolute;
+    width: 100%; height: 100%;
+    background-image: url('assets/wallpaper.jpg');
+    background-size: cover;
+    background-position: center;
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+/* Taskbar */
+.taskbar {
+    position: fixed;
+    bottom: 0; left: 0;
+    width: 100%; height: 35px;
+    background: rgba(255,255,255,0.8);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 -3px 10px rgba(0,0,0,0.2);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 0 10px;
+}
+
+#system-tray {
+    margin-left: auto;
+}
+
+.taskbar-items {
+    display: flex;
+    align-items: center;
+    margin-left: 8px;
+}
+
+.taskbar-item {
+    padding: 0 8px;
+    cursor: pointer;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    color: #333;
+}
+
+.taskbar-item.active {
+    font-weight: bold;
+    border-bottom: 2px solid #0078D7;
+}
+
+.start-btn {
+    display: flex;
+    align-items: center;
+    height: 24px;
+    cursor: pointer;
+    padding: 0 12px;
+}
+
+.start-orb {
+    display: block;
+    width: 18px; height: 18px;
+    background: #0078D7;
+    border-radius: 50%;
+    margin-right: 8px;
+    box-shadow: 0 0 5px rgba(0,120,215,0.5);
+}
+
+.start-text {
+    font-size: 12px;
+    color: #333;
+}
+
+/* Start Menu */
+#start-menu {
+    display: none;
+    z-index: 2000;
+}
+
+#start-menu.open {
+    display: flex;
+    position: fixed;
+    bottom: 35px;
+    left: 0;
+    width: 400px;
+    background: rgba(30,30,30,0.95);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 8px 8px 0 0;
+    overflow: hidden;
+    flex-direction: row;
+}
+
+.start-menu-left {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    box-sizing: border-box;
+}
+
+.start-menu-right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    box-sizing: border-box;
+    border-left: 1px solid rgba(255,255,255,0.1);
+}
+
+.start-menu-user {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+    color: #fff;
+}
+
+.user-icon {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: #fff;
+    margin-right: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 18px;
+    color: #333;
+}
+
+.user-name {
+    font-size: 18px;
+    color: #fff;
+}
+
+.start-menu-items {
+    display: flex;
+    flex-direction: column;
+    font-size: 14px;
+    color: #fff;
+}
+
+.menu-item {
+    padding: 8px 16px;
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+}
+
+.menu-item:hover {
+    background: rgba(255,255,255,0.1);
+}
+
+.menu-item .icon {
+    display: inline-block;
+    width: 16px; height: 16px;
+    margin-right: 8px;
+}
+
+.menu-section-title {
+    font-size: 12px;
+    color: #aaa;
+    margin: 12px 0 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.menu-large-item {
+    padding: 12px 16px;
+    cursor: pointer;
+    margin-bottom: 12px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    color: #fff;
+}
+
+.menu-large-item:hover {
+    background: rgba(255,255,255,0.15);
+}
+
+.menu-large-item .large-icon {
+    display: inline-block;
+    width: 24px; height: 24px;
+    margin-right: 8px;
+}
+
+/* Desktop Icons */
+.desktop-icon {
+    position: absolute;
+    width: 80px;
+    background: rgba(255,255,255,0.8);
+    border-radius: 4px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.1s;
+    z-index: 10;
+    padding: 5px;
+}
+
+.desktop-icon:hover {
+    transform: scale(1.05);
+    background: rgba(255,255,255,0.9);
+}
+
+.desktop-icon .icon-img {
+    font-size: 24px;
+    margin-bottom: 4px;
+}
+
+.desktop-icon .icon-label {
+    font-size: 12px;
+    color: #000;
+    font-weight: bold;
+    text-align: center;
+}
+
+/* Window Styles */
+.window {
+    position: absolute;
+    width: 400px;
+    height: 300px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    overflow: hidden;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+}
+
+.window-header {
+    background: linear-gradient(to right, #C6E2FF, #A5D9FF);
+    padding: 10px 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    box-shadow: inset 0 0 5px rgba(0,0,0,0.1);
+    cursor: move;
+}
+
+.window-title {
+    color: #1D3A6D;
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.window-controls {
+    display: flex;
+    gap: 4px;
+}
+
+.window-close, .window-minimize, .window-maximize {
+    width: 16px; height: 16px;
+    background: #A5D9FF;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: #1D3A6D;
+}
+
+.window-close:hover, .window-minimize:hover, .window-maximize:hover {
+    background: #FF6B6B;
+    color: #fff;
+}
+
+.window-content {
+    flex: 1;
+    padding: 15px;
+    overflow: auto;
+}
+
+.window.minimized {
+    opacity: 0;
+    height: 0;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+}
+
+.window.maximized {
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: calc(100vh - 35px) !important;
+}
+
+/* Resize handles */
+.resize-handle {
+    position: absolute;
+    z-index: 10;
+}
+.resize-n, .resize-s { left: 6px; right: 6px; height: 6px; cursor: ns-resize; }
+.resize-n { top: -3px; }
+.resize-s { bottom: -3px; }
+.resize-e, .resize-w { top: 6px; bottom: 6px; width: 6px; cursor: ew-resize; }
+.resize-e { right: -3px; }
+.resize-w { left: -3px; }
+.resize-ne, .resize-nw, .resize-se, .resize-sw { width: 12px; height: 12px; }
+.resize-ne { top: -3px; right: -3px; cursor: nesw-resize; }
+.resize-sw { bottom: -3px; left: -3px; cursor: nesw-resize; }
+.resize-nw { top: -3px; left: -3px; cursor: nwse-resize; }
+.resize-se { bottom: -3px; right: -3px; cursor: nwse-resize; }
+.window.maximized .resize-handle { display: none; }
+
+/* Aero Glass Effect */
+.window-header {
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    background: rgba(197,226,255,0.7);
+    border-bottom: 1px solid rgba(0,0,0,0.1);
+}
