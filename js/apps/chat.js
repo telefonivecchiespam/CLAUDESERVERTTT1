@@ -41,10 +41,6 @@
         passField.placeholder = 'Password (optional)';
         passField.type = 'password';
         passField.style.cssText = inputStyle() + 'width:180px;';
-        const serverField = document.createElement('input');
-        serverField.placeholder = 'Chat server address (ws://...)';
-        serverField.value = DEFAULT_WS_URL;
-        serverField.style.cssText = inputStyle() + 'width:180px;';
         const connectBtn = document.createElement('button');
         connectBtn.textContent = 'Connect';
         connectBtn.style.cssText = btnStyle();
@@ -52,7 +48,7 @@
         const loginStatus = document.createElement('div');
         loginStatus.style.cssText = 'font-size:11px;color:#333;min-height:14px;';
 
-        [userField, passField, serverField, connectBtn, loginStatus].forEach(el => loginScreen.appendChild(el));
+        [userField, passField, connectBtn, loginStatus].forEach(el => loginScreen.appendChild(el));
         container.appendChild(loginScreen);
 
         userField.addEventListener('keydown', (e) => { if (e.key === 'Enter') connectBtn.click(); });
@@ -61,7 +57,7 @@
         connectBtn.addEventListener('click', () => {
             const username = userField.value.trim();
             if (!username) { loginStatus.textContent = 'Enter a username.'; return; }
-            const url = serverField.value.trim() || DEFAULT_WS_URL;
+            const url = DEFAULT_WS_URL;
             loginStatus.textContent = 'Connecting...';
             connect(url, username, passField.value);
         });
