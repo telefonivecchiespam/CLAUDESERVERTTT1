@@ -36,15 +36,11 @@
         audioContainer.style.display = 'none';
         container.appendChild(audioContainer);
         const ICE_SERVERS = [
-            { urls: 'stun:stun.l.google.com:19302' },
-            // Free public TURN relay (Open Relay Project / Metered) - kicks in only
-            // when a direct peer-to-peer connection can't be established (e.g. one
-            // side is behind a restrictive/symmetric NAT). Shared public credentials,
-            // so if voice becomes unreliable under heavier use, swap these for a free
-            // dedicated account at metered.ca/tools/openrelay.
-            { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-            { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-            { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+            { urls: 'stun:stun.relay.metered.ca:80' },
+            { urls: 'turn:global.relay.metered.ca:80', username: 'b408c53a2abd0ff5deede40e', credential: 'SEDQ1j7CF/5hRqrj' },
+            { urls: 'turn:global.relay.metered.ca:80?transport=tcp', username: 'b408c53a2abd0ff5deede40e', credential: 'SEDQ1j7CF/5hRqrj' },
+            { urls: 'turn:global.relay.metered.ca:443', username: 'b408c53a2abd0ff5deede40e', credential: 'SEDQ1j7CF/5hRqrj' },
+            { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username: 'b408c53a2abd0ff5deede40e', credential: 'SEDQ1j7CF/5hRqrj' }
         ];
 
         // ===== Login screen =====
@@ -419,6 +415,16 @@
                 }
             };
 
+            pc.oniceconnectionstatechange = () => {
+                if (window.appLog) window.appLog('INFO_CHAT', 'ICE state with ' + peerUsername + ': ' + pc.iceConnectionState);
+            };
+
+            pc.onicegatheringstatechange = () => {
+                if (pc.iceGatheringState === 'complete' && window.appLog) {
+                    window.appLog('INFO_CHAT', 'Finished gathering ICE candidates for ' + peerUsername);
+                }
+            };
+
             if (voiceConnection) {
                 voiceConnection.peers.set(peerUsername, { pc, pendingCandidates: [] });
             }
@@ -462,17 +468,20 @@
             if (voiceConnection) {
                 await leaveVoiceChannel();
             }
+            if (window.appLog) window.appLog('INFO_CHAT', 'Requesting microphone access...');
             let localStream;
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             } catch (err) {
                 alert('Could not access your microphone: ' + err.message);
+                if (window.appLog) window.appLog('ERR_CHAT', 'getUserMedia failed: ' + err.name + ' - ' + err.message);
                 return;
             }
+            if (window.appLog) window.appLog('INFO_CHAT', 'Microphone acquired, tracks: ' + localStream.getAudioTracks().length);
             voiceConnection = { serverId, channelId, localStream, peers: new Map(), participants: new Set() };
             ws.send(JSON.stringify({ type: 'voice_join', serverId, channelId }));
             renderList(); renderMain();
-            if (window.appLog) window.appLog('INFO_CHAT', 'Joined voice channel');
+            if (window.appLog) window.appLog('INFO_CHAT', 'Sent voice_join, waiting for participant list');
         }
 
         async function leaveVoiceChannel() {
@@ -488,9 +497,11 @@
 
         async function handleVoiceParticipants(msg) {
             if (!voiceConnection || voiceConnection.channelId !== msg.channelId) return;
+            if (window.appLog) window.appLog('INFO_CHAT', 'Voice participants already there: ' + (msg.participants.length ? msg.participants.join(', ') : '(none)'));
             // We're the new arrival - offer a connection to everyone already there.
             for (const peerUsername of msg.participants) {
                 voiceConnection.participants.add(peerUsername);
+                if (window.appLog) window.appLog('INFO_CHAT', 'Creating offer for ' + peerUsername + '...');
                 const pc = createPeerConnection(peerUsername, msg.serverId, msg.channelId);
                 try {
                     const offer = await pc.createOffer();
@@ -499,8 +510,10 @@
                         type: 'voice_signal', serverId: msg.serverId, channelId: msg.channelId,
                         toUsername: peerUsername, data: { sdp: pc.localDescription }
                     }));
+                    if (window.appLog) window.appLog('INFO_CHAT', 'Offer sent to ' + peerUsername);
                 } catch (err) {
                     console.error('Voice offer failed for', peerUsername, err);
+                    if (window.appLog) window.appLog('ERR_CHAT', 'Offer creation failed for ' + peerUsername + ': ' + err.name + ' - ' + err.message);
                 }
             }
             renderMain();
@@ -509,6 +522,7 @@
         function handleVoicePeerJoined(msg) {
             if (!voiceConnection || voiceConnection.channelId !== msg.channelId) return;
             voiceConnection.participants.add(msg.username);
+            if (window.appLog) window.appLog('INFO_CHAT', msg.username + ' joined the voice channel, waiting for their offer...');
             renderMain(); renderList();
             // We don't initiate here - the peer who just joined will send us an offer.
         }
@@ -526,6 +540,7 @@
             const data = msg.data || {};
 
             if (data.sdp && data.sdp.type === 'offer') {
+                if (window.appLog) window.appLog('INFO_CHAT', 'Received offer from ' + fromUsername);
                 voiceConnection.participants.add(fromUsername);
                 const pc = createPeerConnection(fromUsername, msg.serverId, msg.channelId);
                 const peer = voiceConnection.peers.get(fromUsername);
@@ -538,21 +553,30 @@
                         type: 'voice_signal', serverId: msg.serverId, channelId: msg.channelId,
                         toUsername: fromUsername, data: { sdp: pc.localDescription }
                     }));
+                    if (window.appLog) window.appLog('INFO_CHAT', 'Answer sent to ' + fromUsername);
                 } catch (err) {
                     console.error('Voice answer failed for', fromUsername, err);
+                    if (window.appLog) window.appLog('ERR_CHAT', 'Answer creation failed for ' + fromUsername + ': ' + err.name + ' - ' + err.message);
                 }
                 renderMain();
             } else if (data.sdp && data.sdp.type === 'answer') {
+                if (window.appLog) window.appLog('INFO_CHAT', 'Received answer from ' + fromUsername);
                 const peer = voiceConnection.peers.get(fromUsername);
                 if (peer) {
                     try {
                         await peer.pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
                         await flushPendingCandidates(peer);
-                    } catch (err) { console.error('Voice setRemoteDescription (answer) failed', err); }
+                    } catch (err) {
+                        console.error('Voice setRemoteDescription (answer) failed', err);
+                        if (window.appLog) window.appLog('ERR_CHAT', 'setRemoteDescription (answer) failed: ' + err.name + ' - ' + err.message);
+                    }
+                } else if (window.appLog) {
+                    window.appLog('WARN_CHAT', 'Got an answer from ' + fromUsername + ' but no matching connection exists');
                 }
             } else if (data.candidate) {
                 const peer = voiceConnection.peers.get(fromUsername);
                 if (peer) await addOrQueueCandidate(peer, data.candidate);
+                else if (window.appLog) window.appLog('WARN_CHAT', 'Got an ICE candidate from ' + fromUsername + ' but no matching connection exists');
             }
         }
 
