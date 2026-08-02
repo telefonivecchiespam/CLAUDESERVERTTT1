@@ -23,11 +23,29 @@
 
         let ws = null;
         let myUsername = null;
-        let servers = {};       // id -> server object {id,name,inviteCode,members,channels:[{id,name,messages}]}
+        let servers = {};       // id -> server object {id,name,inviteCode,members,channels:[{id,name,type,messages}]}
         let dms = {};           // withUsername -> {withUsername, messages}
         let onlineUsers = [];
         let activeView = null;  // {type:'dm', withUsername} | {type:'channel', serverId, channelId}
         let selectedServerId = null; // which server is expanded in the rail (null = DM view)
+
+        // Voice chat state - WebRTC mesh, the chat server only relays signaling
+        // messages (SDP offers/answers, ICE candidates); audio itself is peer-to-peer.
+        let voiceConnection = null; // { serverId, channelId, localStream, peers: Map(username -> {pc, audioEl}), participants: Set }
+        const audioContainer = document.createElement('div');
+        audioContainer.style.display = 'none';
+        container.appendChild(audioContainer);
+        const ICE_SERVERS = [
+            { urls: 'stun:stun.l.google.com:19302' },
+            // Free public TURN relay (Open Relay Project / Metered) - kicks in only
+            // when a direct peer-to-peer connection can't be established (e.g. one
+            // side is behind a restrictive/symmetric NAT). Shared public credentials,
+            // so if voice becomes unreliable under heavier use, swap these for a free
+            // dedicated account at metered.ca/tools/openrelay.
+            { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+            { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+            { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+        ];
 
         // ===== Login screen =====
         const loginScreen = document.createElement('div');
@@ -247,7 +265,45 @@
             setTimeout(() => document.addEventListener('click', closeOnClickAway, true), 0);
         }
 
-        // ---- List column rendering (channels or DMs) ----
+        function showAddChannelMenu(anchorEl, server) {
+            const menu = document.createElement('div');
+            menu.style.cssText = 'position:absolute;background:#d4d0c8;border:2px outset #d4d0c8;z-index:60;box-shadow:2px 2px 6px rgba(0,0,0,0.4);';
+            const rect = anchorEl.getBoundingClientRect();
+            const contRect = container.getBoundingClientRect();
+            menu.style.left = (rect.right - contRect.left + 4) + 'px';
+            menu.style.top = (rect.top - contRect.top) + 'px';
+
+            function menuItem(label, onClick) {
+                const item = document.createElement('div');
+                item.textContent = label;
+                item.style.cssText = 'padding:6px 12px;cursor:pointer;white-space:nowrap;';
+                item.addEventListener('mouseenter', () => { item.style.background = '#000080'; item.style.color = '#fff'; });
+                item.addEventListener('mouseleave', () => { item.style.background = ''; item.style.color = ''; });
+                item.addEventListener('click', () => { menu.remove(); onClick(); });
+                return item;
+            }
+
+            menu.appendChild(menuItem('# New Text Channel', () => {
+                showModal('New Text Channel', ['Channel name'], (vals) => {
+                    if (!vals[0]) return;
+                    ws.send(JSON.stringify({ type: 'create_channel', serverId: server.id, name: vals[0], channelType: 'text' }));
+                });
+            }));
+            menu.appendChild(menuItem('🔊 New Voice Channel', () => {
+                showModal('New Voice Channel', ['Channel name'], (vals) => {
+                    if (!vals[0]) return;
+                    ws.send(JSON.stringify({ type: 'create_channel', serverId: server.id, name: vals[0], channelType: 'voice' }));
+                });
+            }));
+
+            container.appendChild(menu);
+            const closeOnClickAway = (e) => {
+                if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', closeOnClickAway, true); }
+            };
+            setTimeout(() => document.addEventListener('click', closeOnClickAway, true), 0);
+        }
+
+
         function renderList() {
             listCol.innerHTML = '';
 
@@ -294,12 +350,7 @@
                 const addBtn = document.createElement('span');
                 addBtn.textContent = '+';
                 addBtn.style.cssText = 'cursor:pointer;color:#2a7a2a;font-weight:bold;';
-                addBtn.addEventListener('click', () => {
-                    showModal('New Channel', ['Channel name'], (vals) => {
-                        if (!vals[0]) return;
-                        ws.send(JSON.stringify({ type: 'create_channel', serverId: server.id, name: vals[0] }));
-                    });
-                });
+                addBtn.addEventListener('click', () => showAddChannelMenu(addBtn, server));
                 header.appendChild(addBtn);
                 listCol.appendChild(header);
 
@@ -313,8 +364,10 @@
                 server.channels.forEach(ch => {
                     const row = document.createElement('div');
                     const isActive = activeView && activeView.type === 'channel' && activeView.channelId === ch.id;
-                    row.textContent = '# ' + ch.name;
-                    row.style.cssText = 'padding:6px 8px;cursor:pointer;' + (isActive ? 'background:#000080;color:#fff;' : '');
+                    const isVoice = ch.type === 'voice';
+                    const inThisVoice = isVoice && voiceConnection && voiceConnection.channelId === ch.id;
+                    row.textContent = (isVoice ? '🔊 ' : '# ') + ch.name + (inThisVoice ? ' (connected)' : '');
+                    row.style.cssText = 'padding:6px 8px;cursor:pointer;' + (isActive ? 'background:#000080;color:#fff;' : '') + (inThisVoice ? 'font-weight:bold;color:#2a7a2a;' : '');
                     row.addEventListener('click', () => { activeView = { type: 'channel', serverId: server.id, channelId: ch.id }; renderList(); renderMain(); });
                     list.appendChild(row);
                 });
@@ -327,7 +380,183 @@
             }
         }
 
-        // ---- Main panel rendering ----
+        // ---- Voice chat (WebRTC mesh) ----
+        function createPeerConnection(peerUsername, serverId, channelId) {
+            const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+            if (voiceConnection && voiceConnection.localStream) {
+                voiceConnection.localStream.getTracks().forEach(track => pc.addTrack(track, voiceConnection.localStream));
+            }
+
+            pc.onicecandidate = (e) => {
+                if (e.candidate && ws) {
+                    ws.send(JSON.stringify({
+                        type: 'voice_signal', serverId, channelId,
+                        toUsername: peerUsername,
+                        data: { candidate: e.candidate }
+                    }));
+                }
+            };
+
+            pc.ontrack = (e) => {
+                let audioEl = audioContainer.querySelector('audio[data-peer="' + peerUsername + '"]');
+                if (!audioEl) {
+                    audioEl = document.createElement('audio');
+                    audioEl.dataset.peer = peerUsername;
+                    audioEl.autoplay = true;
+                    audioContainer.appendChild(audioEl);
+                }
+                audioEl.srcObject = e.streams[0];
+            };
+
+            pc.onconnectionstatechange = () => {
+                if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+                    if (window.appLog) window.appLog('WARN_CHAT', 'Voice connection to ' + peerUsername + ' ' + pc.connectionState);
+                    if (pc.connectionState === 'failed' && voiceConnection) {
+                        removePeer(peerUsername);
+                        renderMain();
+                    }
+                }
+            };
+
+            if (voiceConnection) {
+                voiceConnection.peers.set(peerUsername, { pc, pendingCandidates: [] });
+            }
+            return pc;
+        }
+
+        // Safari/Chrome gather and send ICE candidates at slightly different points
+        // in the offer/answer dance. Queue candidates that arrive before we have a
+        // remote description yet, instead of dropping them - a race here is enough
+        // to make a connection fail on some browser pairings.
+        async function addOrQueueCandidate(peer, candidate) {
+            if (peer.pc.remoteDescription && peer.pc.remoteDescription.type) {
+                try { await peer.pc.addIceCandidate(new RTCIceCandidate(candidate)); }
+                catch (err) { /* benign - can happen with candidates that arrive late */ }
+            } else {
+                peer.pendingCandidates.push(candidate);
+            }
+        }
+
+        async function flushPendingCandidates(peer) {
+            const queued = peer.pendingCandidates;
+            peer.pendingCandidates = [];
+            for (const candidate of queued) {
+                try { await peer.pc.addIceCandidate(new RTCIceCandidate(candidate)); }
+                catch (err) { /* benign */ }
+            }
+        }
+
+        function removePeer(peerUsername) {
+            if (!voiceConnection) return;
+            const peer = voiceConnection.peers.get(peerUsername);
+            if (peer) {
+                try { peer.pc.close(); } catch (e) {}
+                voiceConnection.peers.delete(peerUsername);
+            }
+            const audioEl = audioContainer.querySelector('audio[data-peer="' + peerUsername + '"]');
+            if (audioEl) audioEl.remove();
+        }
+
+        async function joinVoiceChannel(serverId, channelId) {
+            if (voiceConnection) {
+                await leaveVoiceChannel();
+            }
+            let localStream;
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            } catch (err) {
+                alert('Could not access your microphone: ' + err.message);
+                return;
+            }
+            voiceConnection = { serverId, channelId, localStream, peers: new Map(), participants: new Set() };
+            ws.send(JSON.stringify({ type: 'voice_join', serverId, channelId }));
+            renderList(); renderMain();
+            if (window.appLog) window.appLog('INFO_CHAT', 'Joined voice channel');
+        }
+
+        async function leaveVoiceChannel() {
+            if (!voiceConnection) return;
+            const { serverId, channelId, localStream, peers } = voiceConnection;
+            if (ws) ws.send(JSON.stringify({ type: 'voice_leave', serverId, channelId }));
+            peers.forEach((peer, username) => removePeer(username));
+            if (localStream) localStream.getTracks().forEach(t => t.stop());
+            voiceConnection = null;
+            renderList(); renderMain();
+            if (window.appLog) window.appLog('INFO_CHAT', 'Left voice channel');
+        }
+
+        async function handleVoiceParticipants(msg) {
+            if (!voiceConnection || voiceConnection.channelId !== msg.channelId) return;
+            // We're the new arrival - offer a connection to everyone already there.
+            for (const peerUsername of msg.participants) {
+                voiceConnection.participants.add(peerUsername);
+                const pc = createPeerConnection(peerUsername, msg.serverId, msg.channelId);
+                try {
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    ws.send(JSON.stringify({
+                        type: 'voice_signal', serverId: msg.serverId, channelId: msg.channelId,
+                        toUsername: peerUsername, data: { sdp: pc.localDescription }
+                    }));
+                } catch (err) {
+                    console.error('Voice offer failed for', peerUsername, err);
+                }
+            }
+            renderMain();
+        }
+
+        function handleVoicePeerJoined(msg) {
+            if (!voiceConnection || voiceConnection.channelId !== msg.channelId) return;
+            voiceConnection.participants.add(msg.username);
+            renderMain(); renderList();
+            // We don't initiate here - the peer who just joined will send us an offer.
+        }
+
+        function handleVoicePeerLeft(msg) {
+            if (!voiceConnection || voiceConnection.channelId !== msg.channelId) return;
+            voiceConnection.participants.delete(msg.username);
+            removePeer(msg.username);
+            renderMain(); renderList();
+        }
+
+        async function handleVoiceSignal(msg) {
+            if (!voiceConnection || voiceConnection.channelId !== msg.channelId) return;
+            const fromUsername = msg.fromUsername;
+            const data = msg.data || {};
+
+            if (data.sdp && data.sdp.type === 'offer') {
+                voiceConnection.participants.add(fromUsername);
+                const pc = createPeerConnection(fromUsername, msg.serverId, msg.channelId);
+                const peer = voiceConnection.peers.get(fromUsername);
+                try {
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                    await flushPendingCandidates(peer);
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    ws.send(JSON.stringify({
+                        type: 'voice_signal', serverId: msg.serverId, channelId: msg.channelId,
+                        toUsername: fromUsername, data: { sdp: pc.localDescription }
+                    }));
+                } catch (err) {
+                    console.error('Voice answer failed for', fromUsername, err);
+                }
+                renderMain();
+            } else if (data.sdp && data.sdp.type === 'answer') {
+                const peer = voiceConnection.peers.get(fromUsername);
+                if (peer) {
+                    try {
+                        await peer.pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                        await flushPendingCandidates(peer);
+                    } catch (err) { console.error('Voice setRemoteDescription (answer) failed', err); }
+                }
+            } else if (data.candidate) {
+                const peer = voiceConnection.peers.get(fromUsername);
+                if (peer) await addOrQueueCandidate(peer, data.candidate);
+            }
+        }
+
+
         function escapeHtml(s) {
             const d = document.createElement('div');
             d.textContent = s;
@@ -359,6 +588,15 @@
                 placeholder.textContent = 'Select a channel or a conversation to start chatting.';
                 mainCol.appendChild(placeholder);
                 return;
+            }
+
+            if (activeView.type === 'channel') {
+                const server = servers[activeView.serverId];
+                const ch = server && server.channels.find(c => c.id === activeView.channelId);
+                if (ch && ch.type === 'voice') {
+                    renderVoicePanel(server, ch);
+                    return;
+                }
             }
 
             const header = document.createElement('div');
@@ -398,6 +636,58 @@
             inputRow.appendChild(sendBtn);
             mainCol.appendChild(inputRow);
             msgInput.focus();
+        }
+
+        function renderVoicePanel(server, ch) {
+            const header = document.createElement('div');
+            header.style.cssText = 'padding:6px 10px;font-weight:bold;border-bottom:1px solid #808080;background:#d4d0c8;';
+            header.textContent = '🔊 ' + ch.name;
+            mainCol.appendChild(header);
+
+            const body = document.createElement('div');
+            body.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;padding:20px;gap:14px;';
+
+            const inThisChannel = voiceConnection && voiceConnection.channelId === ch.id;
+
+            const participants = document.createElement('div');
+            participants.style.cssText = 'width:100%;max-width:260px;';
+            const list = inThisChannel ? [myUsername, ...Array.from(voiceConnection.participants)] : [];
+
+            if (list.length === 0) {
+                const empty = document.createElement('div');
+                empty.style.cssText = 'text-align:center;color:#888;';
+                empty.textContent = inThisChannel ? 'Just you so far...' : 'Nobody is in this voice channel right now.';
+                participants.appendChild(empty);
+            } else {
+                list.forEach(name => {
+                    const row = document.createElement('div');
+                    row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;';
+                    row.innerHTML = '<span>🎙️</span><span>' + escapeHtml(name) + (name === myUsername ? ' (you)' : '') + '</span>';
+                    participants.appendChild(row);
+                });
+            }
+            body.appendChild(participants);
+
+            const actionBtn = document.createElement('button');
+            actionBtn.style.cssText = btnStyle() + 'padding:6px 20px;';
+            wireBtnPress(actionBtn);
+            if (inThisChannel) {
+                actionBtn.textContent = 'Leave Voice';
+                actionBtn.addEventListener('click', () => leaveVoiceChannel());
+            } else {
+                actionBtn.textContent = 'Join Voice';
+                actionBtn.addEventListener('click', () => joinVoiceChannel(server.id, ch.id));
+            }
+            body.appendChild(actionBtn);
+
+            if (voiceConnection && voiceConnection.channelId !== ch.id) {
+                const note = document.createElement('div');
+                note.style.cssText = 'font-size:11px;color:#888;text-align:center;';
+                note.textContent = "You're currently in another voice channel - joining this one will leave it.";
+                body.appendChild(note);
+            }
+
+            mainCol.appendChild(body);
         }
 
         function renderMessageRow(m) {
@@ -483,6 +773,22 @@
                     if (selectedServerId === null) renderList();
                     break;
 
+                case 'voice_participants':
+                    handleVoiceParticipants(msg);
+                    break;
+
+                case 'voice_peer_joined':
+                    handleVoicePeerJoined(msg);
+                    break;
+
+                case 'voice_peer_left':
+                    handleVoicePeerLeft(msg);
+                    break;
+
+                case 'voice_signal':
+                    handleVoiceSignal(msg);
+                    break;
+
                 case 'error':
                     if (window.appLog) window.appLog('ERR_CHAT', msg.message);
                     break;
@@ -493,6 +799,11 @@
 
         if (typeof WindowManager !== 'undefined' && winId) {
             WindowManager.registerCleanup(winId, () => {
+                if (voiceConnection) {
+                    voiceConnection.peers.forEach((peer, username) => removePeer(username));
+                    if (voiceConnection.localStream) voiceConnection.localStream.getTracks().forEach(t => t.stop());
+                    voiceConnection = null;
+                }
                 if (ws) { try { ws.close(); } catch (e) {} }
             });
         }
