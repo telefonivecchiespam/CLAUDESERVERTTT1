@@ -63,6 +63,11 @@
         loginStatus.style.cssText = 'font-size:11px;color:#333;min-height:14px;';
 
         [userField, passField, connectBtn, loginStatus].forEach(el => loginScreen.appendChild(el));
+
+        const sleepNotice = document.createElement('div');
+        sleepNotice.textContent = 'Nota: il server potrebbe essere "addormentato" se inattivo da un po\' (max ogni 30 minuti si risveglia da solo) - la prima connessione può richiedere fino a 30-60 secondi.';
+        sleepNotice.style.cssText = 'font-size:10px;color:#666;text-align:center;max-width:220px;margin-top:8px;';
+        loginScreen.appendChild(sleepNotice);
         container.appendChild(loginScreen);
 
         userField.addEventListener('keydown', (e) => { if (e.key === 'Enter') connectBtn.click(); });
@@ -362,8 +367,17 @@
                     const isActive = activeView && activeView.type === 'channel' && activeView.channelId === ch.id;
                     const isVoice = ch.type === 'voice';
                     const inThisVoice = isVoice && voiceConnection && voiceConnection.channelId === ch.id;
-                    row.textContent = (isVoice ? '🔊 ' : '# ') + ch.name + (inThisVoice ? ' (connected)' : '');
+                    const occupants = isVoice ? (ch.voiceParticipants || []) : [];
                     row.style.cssText = 'padding:6px 8px;cursor:pointer;' + (isActive ? 'background:#000080;color:#fff;' : '') + (inThisVoice ? 'font-weight:bold;color:#2a7a2a;' : '');
+                    const line1 = document.createElement('div');
+                    line1.textContent = (isVoice ? '🔊 ' : '# ') + ch.name + (inThisVoice ? ' (connected)' : '');
+                    row.appendChild(line1);
+                    if (isVoice && occupants.length > 0) {
+                        const line2 = document.createElement('div');
+                        line2.style.cssText = 'font-size:10px;opacity:0.8;padding-left:16px;';
+                        line2.textContent = occupants.map(n => n === myUsername ? n + ' (you)' : n).join(', ');
+                        row.appendChild(line2);
+                    }
                     row.addEventListener('click', () => { activeView = { type: 'channel', serverId: server.id, channelId: ch.id }; renderList(); renderMain(); });
                     list.appendChild(row);
                 });
@@ -406,11 +420,29 @@
             };
 
             pc.onconnectionstatechange = () => {
-                if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+                if (pc.connectionState === 'connected') {
+                    const peer = voiceConnection && voiceConnection.peers.get(peerUsername);
+                    if (peer && peer.reconnectTimer) { clearTimeout(peer.reconnectTimer); peer.reconnectTimer = null; }
+                    return;
+                }
+                if (['failed', 'disconnected'].includes(pc.connectionState)) {
                     if (window.appLog) window.appLog('WARN_CHAT', 'Voice connection to ' + peerUsername + ' ' + pc.connectionState);
-                    if (pc.connectionState === 'failed' && voiceConnection) {
-                        removePeer(peerUsername);
-                        renderMain();
+                    if (!voiceConnection) return;
+
+                    if (pc.connectionState === 'failed') {
+                        attemptReconnect(peerUsername, serverId, channelId);
+                        return;
+                    }
+                    // 'disconnected' is often transient (brief network blip) and can
+                    // recover on its own within a few seconds - give it a grace period
+                    // before tearing down and reconnecting.
+                    const peer = voiceConnection.peers.get(peerUsername);
+                    if (peer && !peer.reconnectTimer) {
+                        peer.reconnectTimer = setTimeout(() => {
+                            if (voiceConnection && voiceConnection.peers.get(peerUsername) === peer && pc.connectionState !== 'connected') {
+                                attemptReconnect(peerUsername, serverId, channelId);
+                            }
+                        }, 6000);
                     }
                 }
             };
@@ -457,11 +489,45 @@
             if (!voiceConnection) return;
             const peer = voiceConnection.peers.get(peerUsername);
             if (peer) {
+                if (peer.reconnectTimer) clearTimeout(peer.reconnectTimer);
                 try { peer.pc.close(); } catch (e) {}
                 voiceConnection.peers.delete(peerUsername);
             }
             const audioEl = audioContainer.querySelector('audio[data-peer="' + peerUsername + '"]');
             if (audioEl) audioEl.remove();
+        }
+
+        async function sendOfferTo(peerUsername, serverId, channelId) {
+            if (window.appLog) window.appLog('INFO_CHAT', 'Creating offer for ' + peerUsername + '...');
+            const pc = createPeerConnection(peerUsername, serverId, channelId);
+            try {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                ws.send(JSON.stringify({
+                    type: 'voice_signal', serverId, channelId,
+                    toUsername: peerUsername, data: { sdp: pc.localDescription }
+                }));
+                if (window.appLog) window.appLog('INFO_CHAT', 'Offer sent to ' + peerUsername);
+            } catch (err) {
+                console.error('Voice offer failed for', peerUsername, err);
+                if (window.appLog) window.appLog('ERR_CHAT', 'Offer creation failed for ' + peerUsername + ': ' + err.name + ' - ' + err.message);
+            }
+        }
+
+        // When a connection drops, only one side should re-offer (otherwise both
+        // sides race and create duplicate connections) - the alphabetically-first
+        // username takes responsibility for reconnecting.
+        function attemptReconnect(peerUsername, serverId, channelId) {
+            if (!voiceConnection || !myUsername) return;
+            removePeer(peerUsername);
+            if (myUsername < peerUsername) {
+                if (window.appLog) window.appLog('INFO_CHAT', 'Reconnecting to ' + peerUsername + '...');
+                sendOfferTo(peerUsername, serverId, channelId);
+            } else {
+                if (window.appLog) window.appLog('INFO_CHAT', 'Waiting for ' + peerUsername + ' to reconnect...');
+                voiceConnection.participants.add(peerUsername);
+            }
+            renderMain();
         }
 
         async function joinVoiceChannel(serverId, channelId) {
@@ -478,7 +544,7 @@
                 return;
             }
             if (window.appLog) window.appLog('INFO_CHAT', 'Microphone acquired, tracks: ' + localStream.getAudioTracks().length);
-            voiceConnection = { serverId, channelId, localStream, peers: new Map(), participants: new Set() };
+            voiceConnection = { serverId, channelId, localStream, peers: new Map(), participants: new Set(), isMuted: false };
             ws.send(JSON.stringify({ type: 'voice_join', serverId, channelId }));
             renderList(); renderMain();
             if (window.appLog) window.appLog('INFO_CHAT', 'Sent voice_join, waiting for participant list');
@@ -501,20 +567,7 @@
             // We're the new arrival - offer a connection to everyone already there.
             for (const peerUsername of msg.participants) {
                 voiceConnection.participants.add(peerUsername);
-                if (window.appLog) window.appLog('INFO_CHAT', 'Creating offer for ' + peerUsername + '...');
-                const pc = createPeerConnection(peerUsername, msg.serverId, msg.channelId);
-                try {
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                    ws.send(JSON.stringify({
-                        type: 'voice_signal', serverId: msg.serverId, channelId: msg.channelId,
-                        toUsername: peerUsername, data: { sdp: pc.localDescription }
-                    }));
-                    if (window.appLog) window.appLog('INFO_CHAT', 'Offer sent to ' + peerUsername);
-                } catch (err) {
-                    console.error('Voice offer failed for', peerUsername, err);
-                    if (window.appLog) window.appLog('ERR_CHAT', 'Offer creation failed for ' + peerUsername + ': ' + err.name + ' - ' + err.message);
-                }
+                await sendOfferTo(peerUsername, msg.serverId, msg.channelId);
             }
             renderMain();
         }
@@ -662,6 +715,16 @@
             msgInput.focus();
         }
 
+        function toggleMute() {
+            if (!voiceConnection || !voiceConnection.localStream) return;
+            voiceConnection.isMuted = !voiceConnection.isMuted;
+            voiceConnection.localStream.getAudioTracks().forEach(track => {
+                track.enabled = !voiceConnection.isMuted;
+            });
+            if (window.appLog) window.appLog('INFO_CHAT', voiceConnection.isMuted ? 'Microphone muted' : 'Microphone unmuted');
+            renderMain();
+        }
+
         function renderVoicePanel(server, ch) {
             const header = document.createElement('div');
             header.style.cssText = 'padding:6px 10px;font-weight:bold;border-bottom:1px solid #808080;background:#d4d0c8;';
@@ -675,7 +738,9 @@
 
             const participants = document.createElement('div');
             participants.style.cssText = 'width:100%;max-width:260px;';
-            const list = inThisChannel ? [myUsername, ...Array.from(voiceConnection.participants)] : [];
+            const list = inThisChannel
+                ? [myUsername, ...Array.from(voiceConnection.participants)]
+                : (ch.voiceParticipants || []);
 
             if (list.length === 0) {
                 const empty = document.createElement('div');
@@ -686,11 +751,25 @@
                 list.forEach(name => {
                     const row = document.createElement('div');
                     row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;';
-                    row.innerHTML = '<span>🎙️</span><span>' + escapeHtml(name) + (name === myUsername ? ' (you)' : '') + '</span>';
+                    const isMe = name === myUsername;
+                    const icon = (isMe && inThisChannel && voiceConnection.isMuted) ? '🔇' : '🎙️';
+                    row.innerHTML = '<span>' + icon + '</span><span>' + escapeHtml(name) + (isMe ? ' (you)' : '') + '</span>';
                     participants.appendChild(row);
                 });
             }
             body.appendChild(participants);
+
+            const btnRow = document.createElement('div');
+            btnRow.style.cssText = 'display:flex;gap:8px;';
+
+            if (inThisChannel) {
+                const muteBtn = document.createElement('button');
+                muteBtn.style.cssText = btnStyle() + 'padding:6px 20px;';
+                wireBtnPress(muteBtn);
+                muteBtn.textContent = voiceConnection.isMuted ? 'Unmute' : 'Mute';
+                muteBtn.addEventListener('click', () => toggleMute());
+                btnRow.appendChild(muteBtn);
+            }
 
             const actionBtn = document.createElement('button');
             actionBtn.style.cssText = btnStyle() + 'padding:6px 20px;';
@@ -702,7 +781,8 @@
                 actionBtn.textContent = 'Join Voice';
                 actionBtn.addEventListener('click', () => joinVoiceChannel(server.id, ch.id));
             }
-            body.appendChild(actionBtn);
+            btnRow.appendChild(actionBtn);
+            body.appendChild(btnRow);
 
             if (voiceConnection && voiceConnection.channelId !== ch.id) {
                 const note = document.createElement('div');
@@ -773,6 +853,17 @@
                 case 'member_joined':
                     if (window.appLog) window.appLog('INFO_CHAT', msg.username + ' joined a server with you');
                     break;
+
+                case 'voice_occupancy': {
+                    const server = servers[msg.serverId];
+                    const ch = server && server.channels.find(c => c.id === msg.channelId);
+                    if (ch) {
+                        ch.voiceParticipants = msg.participants;
+                        if (selectedServerId === msg.serverId) renderList();
+                        if (activeView && activeView.type === 'channel' && activeView.channelId === msg.channelId) renderMain();
+                    }
+                    break;
+                }
 
                 case 'message': {
                     const t = msg.target;

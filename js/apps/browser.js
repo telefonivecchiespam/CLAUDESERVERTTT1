@@ -2,7 +2,13 @@
 (function() {
     'use strict';
 
-    window.initBrowser = function(container) {
+    // Point this at wherever serverproxy.js is running. Override from index.html
+    // with: <script>window.BROWSER_PROXY_URL = 'https://your-proxy-host';</script>
+    const PROXY_URL = window.BROWSER_PROXY_URL || '';
+
+    window.initBrowser = function(container, winId) {
+        let pendingCleanup = null; // cleans up the previous navigation's timers/listeners, if any
+
         const wrapper = document.createElement('div');
         wrapper.className = 'browser-wrapper';
         wrapper.style.width = '100%';
@@ -40,8 +46,39 @@
         goBtn.style.borderRadius = '15px';
         goBtn.style.cursor = 'pointer';
 
+        function normalizeUrl(raw) {
+            let url = raw.trim();
+            if (!url) return '';
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                if (url.includes('.') && !url.includes(' ')) {
+                    url = 'https://' + url;
+                } else {
+                    url = 'https://duckduckgo.com/?q=' + encodeURIComponent(url);
+                }
+            }
+            return url;
+        }
+
+        const newTabBtn = document.createElement('button');
+        newTabBtn.textContent = '↗';
+        newTabBtn.title = 'Open current page in a new browser tab';
+        newTabBtn.style.padding = '4px 10px';
+        newTabBtn.style.background = '#E0E0E0';
+        newTabBtn.style.color = '#333';
+        newTabBtn.style.border = '1px solid #C0C0C0';
+        newTabBtn.style.borderRadius = '15px';
+        newTabBtn.style.cursor = 'pointer';
+        newTabBtn.addEventListener('click', () => {
+            const url = normalizeUrl(urlInput.value);
+            if (!url) return;
+            urlInput.value = url;
+            window.open(url, '_blank');
+            if (window.appLog) window.appLog('INFO_BROWSE', 'Opened in new tab (manual): ' + url);
+        });
+
         toolbar.appendChild(urlInput);
         toolbar.appendChild(goBtn);
+        toolbar.appendChild(newTabBtn);
         wrapper.appendChild(toolbar);
 
         // Content area - start with new tab page
@@ -58,7 +95,7 @@
                         <input type="text" id="search-input" style="width:300px; padding:8px 12px; border:1px solid #C0C0C0; border-radius:15px; font-size:14px;" placeholder="Search with DuckDuckGo">
                         <button id="search-btn" style="padding:8px 16px; background:#0078D7; color:#fff; border:none; border-radius:15px; cursor:pointer;">Search</button>
                     </div>
-                    <p style="margin-top:10px; font-size:12px; color:#666;">Note: Search opens in a new tab due to iframe restrictions.</p>
+                    ${!PROXY_URL ? '<p style="margin-top:10px; font-size:12px; color:#a00;">No proxy configured - pages will open in a new tab instead of inside the browser.</p>' : '<p style="margin-top:10px; font-size:11px; color:#666;">Nota: il server proxy potrebbe essere "addormentato" se inattivo da un po\' (max ogni 12 ore si risveglia da solo) - la prima pagina caricata può richiedere fino a 30-60 secondi.</p>'}
                 </div>
             `;
             const searchInput = contentDiv.querySelector('#search-input');
@@ -66,9 +103,8 @@
             function doSearch() {
                 const query = searchInput.value;
                 if (query) {
-                    const url = 'https://duckduckgo.com/?q=' + encodeURIComponent(query);
-                    window.open(url, '_blank');
-                    if (window.appLog) window.appLog('INFO_BROWSE', 'Search opened in new tab: ' + query);
+                    urlInput.value = query;
+                    navigate();
                 }
             }
             searchBtn.addEventListener('click', doSearch);
@@ -77,61 +113,95 @@
             });
         }
 
+        function showBlockedMessage(url, reason) {
+            contentDiv.innerHTML = `
+                <div style="padding:40px; text-align:center; color:#333;">
+                    <h2>Unable to load this page</h2>
+                    <p>${reason}</p>
+                    <button id="open-newtab-btn" style="margin-top:10px; padding:8px 16px; background:#0078D7; color:#fff; border:none; border-radius:4px; cursor:pointer;">
+                        Open in new tab instead
+                    </button>
+                </div>
+            `;
+            contentDiv.querySelector('#open-newtab-btn').addEventListener('click', () => window.open(url, '_blank'));
+        }
+
         function navigate() {
-            let url = urlInput.value;
+            const url = normalizeUrl(urlInput.value);
             if (!url) return;
-
-            // Add protocol if missing
-            if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                if (url.includes('.') && !url.includes(' ')) {
-                    url = 'https://' + url;
-                } else {
-                    // Treat as search query
-                    url = 'https://duckduckgo.com/?q=' + encodeURIComponent(url);
-                }
-            }
-
             urlInput.value = url;
 
-            // Determine if URL is external (different origin). If so, open in new tab.
-            const isExternal = (function(u){
-                try { const link = new URL(u); return link.origin !== location.origin; }
-                catch(e){ return true; }
-            })(url);
-            if (isExternal) {
+            if (pendingCleanup) { pendingCleanup(); pendingCleanup = null; }
+
+            if (!PROXY_URL) {
+                // No proxy configured at all - fall back to the old behavior.
                 window.open(url, '_blank');
-                if (window.appLog) window.appLog('INFO_BROWSE', 'Opened external URL in new tab: ' + url);
+                if (window.appLog) window.appLog('INFO_BROWSE', 'Opened in new tab (no proxy configured): ' + url);
                 return;
             }
+
+            const proxiedUrl = PROXY_URL.replace(/\/$/, '') + '/proxy?url=' + encodeURIComponent(url);
+
             const iframe = document.createElement('iframe');
-            iframe.src = url;
+            iframe.src = proxiedUrl;
             iframe.style.width = '100%';
             iframe.style.height = '100%';
             iframe.style.border = 'none';
 
-            // Handle iframe load errors
+            let settled = false;
+            let currentIframe = iframe;
+
+            const loadTimeout = setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                showBlockedMessage(url, 'This page is taking too long to load, or the proxy could not reach it.');
+                if (window.appLog) window.appLog('ERR_BROWSE', 'Timed out loading: ' + url);
+            }, 15000);
+
+            function onProxyMessage(e) {
+                if (settled) return;
+                if (!e.data || e.data.type !== 'proxy-error') return;
+                // Only react to messages from the iframe we're currently showing,
+                // in case the user already navigated elsewhere.
+                if (e.source !== currentIframe.contentWindow) return;
+                settled = true;
+                clearTimeout(loadTimeout);
+                window.removeEventListener('message', onProxyMessage);
+                showBlockedMessage(url, e.data.message || 'The proxy could not load this site.');
+                if (window.appLog) window.appLog('ERR_BROWSE', 'Proxy reported an error for: ' + url);
+            }
+            window.addEventListener('message', onProxyMessage);
+            pendingCleanup = () => {
+                clearTimeout(loadTimeout);
+                window.removeEventListener('message', onProxyMessage);
+            };
+
             iframe.addEventListener('load', () => {
-                try {
-                    const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                    if (!iframeDoc || iframeDoc.body.innerHTML === '') {
-                        throw new Error('Blocked');
-                    }
-                } catch(e) {
-                    contentDiv.innerHTML = `
-                        <div style="padding:40px; text-align:center; color:#333;">
-                            <h2>Unable to load this page</h2>
-                            <p>This site prevents loading in a frame.</p>
-                            <button onclick="window.open('${url}', '_blank')" style="margin-top:10px; padding:8px 16px; background:#0078D7; color:#fff; border:none; border-radius:4px; cursor:pointer;">
-                                Open in new tab
-                            </button>
-                        </div>
-                    `;
-                    if (window.appLog) window.appLog('ERR_BROWSE', 'Site blocked iframe: ' + url);
-                }
+                if (settled) return;
+                // The error page's postMessage (if this "successful load" is
+                // actually our proxy's error page) was sent synchronously during
+                // the iframe's own script execution, which happens before this
+                // 'load' event - but message dispatch is still async, so give it
+                // a brief moment to arrive before treating this as a real success.
+                setTimeout(() => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(loadTimeout);
+                    window.removeEventListener('message', onProxyMessage);
+                }, 150);
+            });
+            iframe.addEventListener('error', () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(loadTimeout);
+                window.removeEventListener('message', onProxyMessage);
+                showBlockedMessage(url, 'The proxy could not reach this site.');
+                if (window.appLog) window.appLog('ERR_BROWSE', 'Proxy failed to load: ' + url);
             });
 
             contentDiv.innerHTML = '';
             contentDiv.appendChild(iframe);
+            if (window.appLog) window.appLog('INFO_BROWSE', 'Navigating (via proxy) to: ' + url);
         }
 
         goBtn.addEventListener('click', navigate);
@@ -147,5 +217,11 @@
         container.appendChild(wrapper);
 
         if (window.appLog) window.appLog('INFO_BROWSE', 'Browser initialized');
+
+        if (typeof WindowManager !== 'undefined' && winId) {
+            WindowManager.registerCleanup(winId, () => {
+                if (pendingCleanup) { pendingCleanup(); pendingCleanup = null; }
+            });
+        }
     };
 })();
