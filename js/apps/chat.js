@@ -66,45 +66,79 @@
 
         const sleepNotice = document.createElement('div');
         sleepNotice.textContent = 'Nota: il server potrebbe essere "addormentato" se inattivo da un po\' (max ogni 30 minuti si risveglia da solo) - la prima connessione può richiedere fino a 30-60 secondi.';
-        sleepNotice.style.cssText = 'font-size:10px;color:#666;text-align:center;max-width:220px;margin-top:8px;';
+        sleepNotice.style.cssText = 'font-size:13px;color:#666;text-align:center;max-width:220px;margin-top:8px;';
         loginScreen.appendChild(sleepNotice);
         container.appendChild(loginScreen);
 
         userField.addEventListener('keydown', (e) => { if (e.key === 'Enter') connectBtn.click(); });
         passField.addEventListener('keydown', (e) => { if (e.key === 'Enter') connectBtn.click(); });
 
+        let connectAttemptId = 0; // invalidates stale retry chains if the user clicks Connect again
+
         connectBtn.addEventListener('click', () => {
             const username = userField.value.trim();
             if (!username) { loginStatus.textContent = 'Enter a username.'; return; }
-            const url = DEFAULT_WS_URL;
-            loginStatus.textContent = 'Connecting...';
-            connect(url, username, passField.value);
+            connectAttemptId++;
+            attemptConnect(DEFAULT_WS_URL, username, passField.value, connectAttemptId, 1);
         });
 
-        function connect(url, username, password) {
+        const MAX_CONNECT_ATTEMPTS = 8;
+        const RETRY_DELAY_MS = 5000;
+
+        function attemptConnect(url, username, password, attemptId, attemptNumber) {
+            if (attemptId !== connectAttemptId) return; // a newer attempt has taken over
+
+            loginStatus.textContent = attemptNumber === 1
+                ? 'Connecting...'
+                : `Server might be waking up - retrying... (${attemptNumber}/${MAX_CONNECT_ATTEMPTS})`;
+
+            connect(url, username, password, () => {
+                // Called if the connection closed/errored before we got authenticated.
+                if (attemptId !== connectAttemptId) return;
+                if (attemptNumber >= MAX_CONNECT_ATTEMPTS) {
+                    loginStatus.textContent = 'Could not connect after several attempts. Try again later.';
+                    return;
+                }
+                setTimeout(() => attemptConnect(url, username, password, attemptId, attemptNumber + 1), RETRY_DELAY_MS);
+            });
+        }
+
+        function connect(url, username, password, onFailedBeforeAuth) {
             try {
                 ws = new WebSocket(url);
             } catch (e) {
                 loginStatus.textContent = 'Invalid server address.';
                 return;
             }
+            let authenticated = false;
+            let failedCalled = false;
+            function reportFailure() {
+                if (failedCalled) return;
+                failedCalled = true;
+                onFailedBeforeAuth();
+            }
             ws.onopen = () => {
                 ws.send(JSON.stringify({ type: 'auth', username, password }));
             };
             ws.onerror = () => {
-                loginStatus.textContent = 'Could not connect to chat server.';
+                if (!authenticated) {
+                    reportFailure();
+                } else {
+                    loginStatus.textContent = 'Could not connect to chat server.';
+                }
             };
             ws.onclose = () => {
                 if (myUsername) {
                     loginStatus.textContent = 'Disconnected from chat server.';
                     showLogin();
-                } else {
-                    loginStatus.textContent = 'Could not connect to chat server.';
+                } else if (!authenticated) {
+                    reportFailure();
                 }
             };
             ws.onmessage = (e) => {
                 let msg;
                 try { msg = JSON.parse(e.data); } catch (err) { return; }
+                if (msg.type === 'auth_ok') authenticated = true;
                 handleServerMessage(msg);
             };
         }

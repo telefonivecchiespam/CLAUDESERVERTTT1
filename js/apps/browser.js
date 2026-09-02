@@ -2,11 +2,13 @@
 (function() {
     'use strict';
 
-    // Point this at wherever serverproxy.js is running. Override from index.html
-    // with: <script>window.BROWSER_PROXY_URL = 'https://your-proxy-host';</script>
-    const PROXY_URL = window.BROWSER_PROXY_URL || '';
-
     window.initBrowser = function(container, winId) {
+        // Point this at wherever serverproxy.js is running. Override from index.html
+        // with: <script>window.BROWSER_PROXY_URL = 'https://your-proxy-host';</script>
+        // Read lazily (at app-open time, not script-load time) so it works no
+        // matter what order the <script> tags happen to be in.
+        const PROXY_URL = window.BROWSER_PROXY_URL || '';
+
         let pendingCleanup = null; // cleans up the previous navigation's timers/listeners, if any
 
         const wrapper = document.createElement('div');
@@ -95,7 +97,7 @@
                         <input type="text" id="search-input" style="width:300px; padding:8px 12px; border:1px solid #C0C0C0; border-radius:15px; font-size:14px;" placeholder="Search with DuckDuckGo">
                         <button id="search-btn" style="padding:8px 16px; background:#0078D7; color:#fff; border:none; border-radius:15px; cursor:pointer;">Search</button>
                     </div>
-                    ${!PROXY_URL ? '<p style="margin-top:10px; font-size:12px; color:#a00;">No proxy configured - pages will open in a new tab instead of inside the browser.</p>' : '<p style="margin-top:10px; font-size:11px; color:#666;">Nota: il server proxy potrebbe essere "addormentato" se inattivo da un po\' (max ogni 12 ore si risveglia da solo) - la prima pagina caricata può richiedere fino a 30-60 secondi.</p>'}
+                    ${!PROXY_URL ? '<p style="margin-top:10px; font-size:12px; color:#a00;">No proxy configured - pages will open in a new tab instead of inside the browser.</p>' : '<p style="margin-top:10px; font-size:13px; color:#666;">Nota: il server proxy potrebbe essere "addormentato" se inattivo da un po\' (max ogni 12 ore si risveglia da solo) - la prima pagina caricata può richiedere fino a 30-60 secondi.</p>'}
                 </div>
             `;
             const searchInput = contentDiv.querySelector('#search-input');

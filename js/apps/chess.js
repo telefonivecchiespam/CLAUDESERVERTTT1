@@ -116,7 +116,7 @@
 
         const sleepNotice = document.createElement('div');
         sleepNotice.textContent = 'Nota: il server potrebbe essere "addormentato" se inattivo da un po\' (max ogni 3 ore si risveglia da solo) - la prima connessione può richiedere fino a 30-60 secondi.';
-        sleepNotice.style.cssText = 'font-size:10px;color:#666;text-align:center;max-width:220px;margin-top:8px;';
+        sleepNotice.style.cssText = 'font-size:13px;color:#666;text-align:center;max-width:220px;margin-top:8px;';
 
         multiplayerDiv.appendChild(createDiv);
         multiplayerDiv.appendChild(joinDiv);
