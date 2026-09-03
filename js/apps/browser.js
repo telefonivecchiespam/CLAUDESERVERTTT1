@@ -128,6 +128,39 @@
             contentDiv.querySelector('#open-newtab-btn').addEventListener('click', () => window.open(url, '_blank'));
         }
 
+        function showWakingMessage(secondsWaited) {
+            contentDiv.innerHTML = `
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; background:#fff; color:#333;">
+                    <div style="font-size:32px; margin-bottom:10px;">⏳</div>
+                    <p>Waking up the browser server${'.'.repeat(1 + (secondsWaited % 3))}</p>
+                    <p style="font-size:12px; color:#666;">This can take up to a minute if it's been asleep for a while.</p>
+                </div>
+            `;
+        }
+
+        // Render's free tier serves its own generic "waking up" placeholder page
+        // for the FIRST request while the proxy is asleep - if we just pointed the
+        // iframe straight at it, that placeholder (not the site the user wanted)
+        // would show up inside the browser looking like a broken/wrong page. So we
+        // ping our own proxy's root endpoint first and wait for OUR app to actually
+        // respond, showing our own "waking up" message meanwhile, and only then
+        // navigate the iframe to the real target.
+        async function wakeProxy(onReady, onFailed) {
+            const maxAttempts = 12; // 12 * 5s = up to ~60s
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                showWakingMessage(attempt);
+                try {
+                    const res = await fetch(PROXY_URL.replace(/\/$/, '') + '/', { cache: 'no-store' });
+                    if (res.ok) {
+                        const text = await res.text();
+                        if (text.includes('Browser proxy server is running')) { onReady(); return; }
+                    }
+                } catch (e) { /* still asleep or unreachable - keep retrying */ }
+                await new Promise(r => setTimeout(r, 5000));
+            }
+            onFailed();
+        }
+
         function navigate() {
             const url = normalizeUrl(urlInput.value);
             if (!url) return;
@@ -142,6 +175,16 @@
                 return;
             }
 
+            wakeProxy(
+                () => actuallyNavigate(url),
+                () => {
+                    showBlockedMessage(url, 'The proxy server did not wake up in time. It may be temporarily unavailable.');
+                    if (window.appLog) window.appLog('ERR_BROWSE', 'Proxy did not wake up for: ' + url);
+                }
+            );
+        }
+
+        function actuallyNavigate(url) {
             const proxiedUrl = PROXY_URL.replace(/\/$/, '') + '/proxy?url=' + encodeURIComponent(url);
 
             const iframe = document.createElement('iframe');
