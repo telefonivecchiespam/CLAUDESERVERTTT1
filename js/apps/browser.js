@@ -185,7 +185,7 @@
         }
 
         function actuallyNavigate(url) {
-            const proxiedUrl = PROXY_URL.replace(/\/$/, '') + '/proxy?url=' + encodeURIComponent(url);
+            const proxiedUrl = PROXY_URL.replace(/\/$/, '') + '/proxy/' + encodeURIComponent(url);
 
             const iframe = document.createElement('iframe');
             iframe.src = proxiedUrl;
