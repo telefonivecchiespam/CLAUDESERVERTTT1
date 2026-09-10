@@ -12,6 +12,14 @@
         try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* ignore (private mode, quota, etc.) */ }
     }
 
+    // Default search engine: a public SearXNG instance. SearXNG aggregates
+    // results from Bing/Yahoo/etc. server-side with its own anti-detection
+    // handling, so it isn't hit by the same bot-blocking that breaks Google/
+    // DuckDuckGo/Bing search when accessed directly through our proxy.
+    // If this instance ever goes down, swap in another from
+    // https://searx.space (look for "V" HTML grade + high uptime).
+    const SEARCH_ENGINE_URL = 'https://search.mdosch.de/search?q=';
+
     window.initBrowser = function(container, winId) {
         // Point this at wherever serverproxy.js is running. Override from index.html
         // with: <script>window.BROWSER_PROXY_URL = 'https://your-proxy-host';</script>
@@ -90,7 +98,7 @@
                 if (url.includes('.') && !url.includes(' ')) {
                     url = 'https://' + url;
                 } else {
-                    url = 'https://duckduckgo.com/?q=' + encodeURIComponent(url);
+                    url = SEARCH_ENGINE_URL + encodeURIComponent(url);
                 }
             }
             return url;
@@ -207,7 +215,7 @@
             searchRow.style.cssText = 'display:flex; gap:5px;';
             const searchInput = document.createElement('input');
             searchInput.type = 'text';
-            searchInput.placeholder = 'Search with DuckDuckGo';
+            searchInput.placeholder = 'Search';
             searchInput.style.cssText = 'width:300px; padding:8px 12px; border:1px solid #C0C0C0; border-radius:15px; font-size:14px;';
             const searchBtn = document.createElement('button');
             searchBtn.textContent = 'Search';
