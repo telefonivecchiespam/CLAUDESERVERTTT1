@@ -12,13 +12,20 @@
         try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* ignore (private mode, quota, etc.) */ }
     }
 
-    // Default search engine: a public SearXNG instance. SearXNG aggregates
+    // Default search engine: public SearXNG instances. SearXNG aggregates
     // results from Bing/Yahoo/etc. server-side with its own anti-detection
     // handling, so it isn't hit by the same bot-blocking that breaks Google/
-    // DuckDuckGo/Bing search when accessed directly through our proxy.
-    // If this instance ever goes down, swap in another from
-    // https://searx.space (look for "V" HTML grade + high uptime).
-    const SEARCH_ENGINE_URL = 'https://search.mdosch.de/search?q=';
+    // DuckDuckGo/Bing search when accessed directly through our proxy. We
+    // rotate between a couple of instances so we don't hammer just one - if
+    // both ever go down, swap in others from https://searx.space (look for
+    // "V" HTML grade + high uptime).
+    const SEARCH_ENGINE_INSTANCES = [
+        'https://search.mdosch.de/search?q=',
+        'https://search.im-in.space/search?q='
+    ];
+    function searchEngineUrl() {
+        return SEARCH_ENGINE_INSTANCES[Math.floor(Math.random() * SEARCH_ENGINE_INSTANCES.length)];
+    }
 
     window.initBrowser = function(container, winId) {
         // Point this at wherever serverproxy.js is running. Override from index.html
@@ -32,8 +39,9 @@
         let historyIndex = -1;
         let skipNextHistoryPush = false; // set when navigating via Back/Forward/Reload
 
-        let bookmarks = loadJSON('browser_bookmarks_v1', []);   // [{url}]
-        let recentSites = loadJSON('browser_recent_v1', []);    // [{url, time}]
+        let bookmarks = loadJSON('browser_bookmarks_v1', []);   // [{url, title}]
+        let recentSites = loadJSON('browser_recent_v1', []);    // [{url, title, time}]
+        let currentTitle = '';
 
         const wrapper = document.createElement('div');
         wrapper.className = 'browser-wrapper';
@@ -98,7 +106,7 @@
                 if (url.includes('.') && !url.includes(' ')) {
                     url = 'https://' + url;
                 } else {
-                    url = SEARCH_ENGINE_URL + encodeURIComponent(url);
+                    url = searchEngineUrl() + encodeURIComponent(url);
                 }
             }
             return url;
@@ -161,7 +169,7 @@
             if (isBookmarked(url)) {
                 bookmarks = bookmarks.filter(b => b.url !== url);
             } else {
-                bookmarks.unshift({ url });
+                bookmarks.unshift({ url, title: currentTitle || '' });
                 if (bookmarks.length > 30) bookmarks.pop();
             }
             saveJSON('browser_bookmarks_v1', bookmarks);
@@ -169,9 +177,9 @@
         }
         starBtn.addEventListener('click', toggleBookmark);
 
-        function addRecent(url) {
+        function addRecent(url, title) {
             recentSites = recentSites.filter(r => r.url !== url);
-            recentSites.unshift({ url, time: Date.now() });
+            recentSites.unshift({ url, title: title || '', time: Date.now() });
             if (recentSites.length > 15) recentSites.pop();
             saveJSON('browser_recent_v1', recentSites);
         }
@@ -197,8 +205,9 @@
             updateNavButtons();
         }
 
-        function siteLabel(url) {
-            try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return url; }
+        function siteLabel(item) {
+            if (item.title) return item.title;
+            try { return new URL(item.url).hostname.replace(/^www\./, ''); } catch (e) { return item.url; }
         }
 
         function showNewTab() {
@@ -251,7 +260,7 @@
                     row.addEventListener('mouseenter', () => row.style.background = '#f0f6ff');
                     row.addEventListener('mouseleave', () => row.style.background = 'transparent');
                     const label = document.createElement('span');
-                    label.textContent = siteLabel(item.url);
+                    label.textContent = siteLabel(item);
                     label.style.cssText = 'color:#0078D7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
                     row.appendChild(label);
                     row.addEventListener('click', () => { urlInput.value = item.url; navigate(); });
@@ -328,6 +337,7 @@
         // recent-site click).
         function loadUrl(url, addToHistory) {
             urlInput.value = url;
+            currentTitle = '';
             updateStarBtn();
             if (addToHistory) { pushHistory(url); addRecent(url); }
 
@@ -457,9 +467,10 @@
         window.addEventListener('message', (e) => {
             if (!e.data || e.data.type !== 'proxy-navigated' || !e.data.url) return;
             urlInput.value = e.data.url;
+            currentTitle = e.data.title || '';
             updateStarBtn();
             pushHistory(e.data.url);
-            addRecent(e.data.url);
+            addRecent(e.data.url, currentTitle);
         });
 
         goBtn.addEventListener('click', navigate);
