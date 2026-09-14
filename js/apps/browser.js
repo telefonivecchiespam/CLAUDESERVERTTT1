@@ -20,8 +20,7 @@
     // both ever go down, swap in others from https://searx.space (look for
     // "V" HTML grade + high uptime).
     const SEARCH_ENGINE_INSTANCES = [
-        'https://search.mdosch.de/search?q=',
-        'https://search.im-in.space/search?q='
+        'https://searxng-production-525c.up.railway.app/search?q=',
     ];
     function searchEngineUrl() {
         return SEARCH_ENGINE_INSTANCES[Math.floor(Math.random() * SEARCH_ENGINE_INSTANCES.length)];
