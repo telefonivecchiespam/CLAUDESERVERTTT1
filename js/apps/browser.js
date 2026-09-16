@@ -261,7 +261,20 @@
                     row.addEventListener('mouseleave', () => row.style.background = 'transparent');
                     const label = document.createElement('span');
                     label.textContent = siteLabel(item);
-                    label.style.cssText = 'color:#0078D7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+                    label.style.cssText = 'color:#0078D7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:flex; align-items:center; gap:6px;';
+                    if (PROXY_URL) {
+                        try {
+                            const origin = new URL(item.url).origin;
+                            const favicon = document.createElement('img');
+                            favicon.src = PROXY_URL.replace(/\/$/, '') + '/proxy/' + encodeURIComponent(origin + '/favicon.ico');
+                            favicon.style.cssText = 'width:14px; height:14px; flex-shrink:0;';
+                            favicon.alt = '';
+                            // Most sites have a favicon.ico, but plenty don't - fail
+                            // silently rather than showing a broken-image icon.
+                            favicon.addEventListener('error', () => favicon.remove());
+                            label.prepend(favicon);
+                        } catch (e) { /* malformed URL - just skip the icon */ }
+                    }
                     row.appendChild(label);
                     row.addEventListener('click', () => { urlInput.value = item.url; navigate(); });
                     if (opts && opts.removable) {
