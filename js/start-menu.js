@@ -75,7 +75,8 @@
             recycle: 'Recycle Bin',
             tictactoe: 'Tic Tac Toe',
             chess: 'Chess',
-            chat: 'Chat'
+            chat: 'Chat',
+            privacy: 'Privacy'
         };
 
         var win = WindowManager.createWindow(appId, titleMap[appId] || 'App', '');
