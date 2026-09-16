@@ -53,6 +53,11 @@ window.initPrivacy = function(container) {
             server (come qualunque hosting), ma non è dato che raccogliamo o analizziamo noi. Nessuno dei
             due servizi viene usato qui per pubblicità o profilazione.</p>
 
+            <h3 style="font-size:13px; margin:14px 0 4px;">🎵 Media Player</h3>
+            <p>I file audio/video che apri restano solo nel tuo browser (Object URL locale): non vengono
+            mai caricati su nessun server, nemmeno i nostri. La playlist non viene salvata: va ricreata
+            ad ogni apertura dell'app.</p>
+
             <h3 style="font-size:13px; margin:14px 0 4px;">🎮 Tris, Scacchi</h3>
             <p>Solo il nome scelto per la partita viene inviato al server di gioco, e solo per la durata
             della partita stessa (stanza in memoria, non salvata su disco).</p>
