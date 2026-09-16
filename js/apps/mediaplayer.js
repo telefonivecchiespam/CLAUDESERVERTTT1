@@ -10,13 +10,18 @@ window.initMediaplayer = function(container, winId) {
     wrapper.style.cssText = 'display:flex; flex-direction:column; height:100%; font-family:Tahoma, sans-serif; font-size:12px; background:#c0c0c0;';
 
     wrapper.innerHTML = `
+        <style>
+            .mp-video:fullscreen, .mp-video:-webkit-full-screen { max-width:100%; max-height:100%; width:100%; height:100%; }
+            .mp-video-wrap:fullscreen, .mp-video-wrap:-webkit-full-screen { max-height:none; }
+        </style>
         <div style="padding:6px; border-bottom:1px solid #808080; display:flex; gap:6px; align-items:center;">
             <button class="mp-add-btn">+ Aggiungi file...</button>
             <input type="file" class="mp-file-input" accept="audio/*,video/*,.mp3,.mp4,.ogg,.oga,.ogv,.wav,.m4a,.aac,.flac,.webm,.mov,.mkv,.m4v,.avi,.wmv,.flv,.3gp,.3g2,.mpg,.mpeg,.ts,.m2ts,.asf" multiple style="display:none;">
             <span class="mp-now-playing" style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;">Nessun file caricato</span>
         </div>
-        <div class="mp-video-wrap" style="background:#000; display:none; align-items:center; justify-content:center; flex-shrink:0;">
+        <div class="mp-video-wrap" style="background:#000; display:none; align-items:center; justify-content:center; flex-shrink:0; position:relative;">
             <video class="mp-video" style="max-width:100%; max-height:220px;"></video>
+            <button class="mp-fullscreen" title="Schermo intero" style="position:absolute; right:6px; bottom:6px; opacity:0.85;">⛶</button>
         </div>
         <audio class="mp-audio"></audio>
         <div style="padding:6px 8px; border-bottom:1px solid #808080;">
@@ -43,6 +48,7 @@ window.initMediaplayer = function(container, winId) {
     const nowPlaying = wrapper.querySelector('.mp-now-playing');
     const videoWrap = wrapper.querySelector('.mp-video-wrap');
     const videoEl = wrapper.querySelector('.mp-video');
+    const fullscreenBtn = wrapper.querySelector('.mp-fullscreen');
     const audioEl = wrapper.querySelector('.mp-audio');
     const seekEl = wrapper.querySelector('.mp-seek');
     const timeCurrentEl = wrapper.querySelector('.mp-time-current');
@@ -146,6 +152,17 @@ window.initMediaplayer = function(container, winId) {
     playPauseBtn.addEventListener('click', togglePlayPause);
     nextBtn.addEventListener('click', playNext);
     prevBtn.addEventListener('click', playPrev);
+    fullscreenBtn.addEventListener('click', () => {
+        if (document.fullscreenElement) {
+            document.exitFullscreen();
+        } else if (videoEl.requestFullscreen) {
+            videoEl.requestFullscreen();
+        } else if (videoEl.webkitEnterFullscreen) {
+            videoEl.webkitEnterFullscreen(); // iOS Safari - only the <video> itself supports fullscreen there
+        } else if (videoWrap.requestFullscreen) {
+            videoWrap.requestFullscreen();
+        }
+    });
     volumeEl.addEventListener('input', () => { audioEl.volume = videoEl.volume = parseFloat(volumeEl.value); });
 
     [audioEl, videoEl].forEach(el => {
