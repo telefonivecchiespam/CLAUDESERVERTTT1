@@ -103,6 +103,25 @@
                     cell.dataset.y = y;
                     cell.addEventListener('click', () => { if (!gameOver) { startTimer(); } revealCell(x, y); });
                     cell.addEventListener('contextmenu', (e) => { e.preventDefault(); toggleFlag(x, y, cell); });
+
+                    // Touch devices have no right-click - hold ~450ms to flag instead.
+                    // longPressFired suppresses the click's reveal that would otherwise
+                    // fire right after the touch ends.
+                    let longPressTimer = null;
+                    let longPressFired = false;
+                    cell.addEventListener('touchstart', () => {
+                        longPressFired = false;
+                        longPressTimer = setTimeout(() => {
+                            longPressFired = true;
+                            toggleFlag(x, y, cell);
+                        }, 450);
+                    }, { passive: true });
+                    cell.addEventListener('touchend', (e) => {
+                        clearTimeout(longPressTimer);
+                        if (longPressFired) e.preventDefault(); // block the trailing click-to-reveal
+                    });
+                    cell.addEventListener('touchmove', () => clearTimeout(longPressTimer));
+
                     boardDiv.appendChild(cell);
                 }
             }

@@ -12,15 +12,16 @@
         try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* ignore (private mode, quota, etc.) */ }
     }
 
-    // Default search engine: public SearXNG instances. SearXNG aggregates
-    // results from Bing/Yahoo/etc. server-side with its own anti-detection
-    // handling, so it isn't hit by the same bot-blocking that breaks Google/
-    // DuckDuckGo/Bing search when accessed directly through our proxy. We
-    // rotate between a couple of instances so we don't hammer just one - if
-    // both ever go down, swap in others from https://searx.space (look for
-    // "V" HTML grade + high uptime).
+    // Default search engine: our own SearXNG instance on Railway. SearXNG
+    // aggregates results from Bing/Yahoo/etc. server-side with its own
+    // anti-detection handling, so it isn't hit by the same bot-blocking that
+    // breaks Google/DuckDuckGo/Bing search when accessed directly through our
+    // proxy. Only one instance is listed right now; add more entries here if
+    // you want random rotation - if this one goes down, swap in others from
+    // https://searx.space (look for "V" HTML grade + high uptime).
     const SEARCH_ENGINE_INSTANCES = [
         'https://searxng-production-525c.up.railway.app/search?q=',
+       
     ];
     function searchEngineUrl() {
         return SEARCH_ENGINE_INSTANCES[Math.floor(Math.random() * SEARCH_ENGINE_INSTANCES.length)];
