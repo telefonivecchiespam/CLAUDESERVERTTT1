@@ -39,7 +39,7 @@
             const handle = document.createElement('div');
             handle.className = 'resize-handle resize-' + dir;
             handle.dataset.dir = dir;
-            handle.addEventListener('mousedown', (e) => startResize(e, winId, dir));
+            handle.addEventListener('pointerdown', (e) => startResize(e, winId, dir));
             win.appendChild(handle);
         });
 
@@ -52,12 +52,14 @@
         const minimizeBtn = win.querySelector('.window-minimize');
         const maximizeBtn = win.querySelector('.window-maximize');
 
-        // Drag
-        header.addEventListener('mousedown', (e) => startDrag(e, winId));
+        // Drag - pointerdown/move/up covers mouse, touch and pen with one
+        // set of listeners (mousedown-only meant windows couldn't be dragged
+        // at all on touch devices, even from "desktop mode" in the browser).
+        header.addEventListener('pointerdown', (e) => startDrag(e, winId));
         closeBtn.addEventListener('click', () => closeWindow(winId));
         minimizeBtn.addEventListener('click', () => minimizeWindow(winId));
         maximizeBtn.addEventListener('click', () => maximizeWindow(winId));
-        win.addEventListener('mousedown', () => bringToFront(winId));
+        win.addEventListener('pointerdown', () => bringToFront(winId));
 
         return win;
     }
@@ -152,8 +154,9 @@
             offsetX: e.clientX - win.offsetLeft,
             offsetY: e.clientY - win.offsetTop
         };
-        document.addEventListener('mousemove', onDrag);
-        document.addEventListener('mouseup', endDrag);
+        document.addEventListener('pointermove', onDrag);
+        document.addEventListener('pointerup', endDrag);
+        document.addEventListener('pointercancel', endDrag);
     }
     function onDrag(e) {
         if (!dragData) return;
@@ -162,8 +165,9 @@
         win.style.top = Math.max(0, e.clientY - offsetY) + 'px';
     }
     function endDrag() {
-        document.removeEventListener('mousemove', onDrag);
-        document.removeEventListener('mouseup', endDrag);
+        document.removeEventListener('pointermove', onDrag);
+        document.removeEventListener('pointerup', endDrag);
+        document.removeEventListener('pointercancel', endDrag);
         dragData = null;
     }
 
@@ -185,8 +189,9 @@
             startLeft: win.offsetLeft,
             startTop: win.offsetTop
         };
-        document.addEventListener('mousemove', onResize);
-        document.addEventListener('mouseup', endResize);
+        document.addEventListener('pointermove', onResize);
+        document.addEventListener('pointerup', endResize);
+        document.addEventListener('pointercancel', endResize);
     }
     function onResize(e) {
         if (!resizeData) return;
@@ -213,8 +218,9 @@
         win.style.top = newTop + 'px';
     }
     function endResize() {
-        document.removeEventListener('mousemove', onResize);
-        document.removeEventListener('mouseup', endResize);
+        document.removeEventListener('pointermove', onResize);
+        document.removeEventListener('pointerup', endResize);
+        document.removeEventListener('pointercancel', endResize);
         resizeData = null;
     }
 

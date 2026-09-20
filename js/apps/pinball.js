@@ -5,18 +5,18 @@ window.initPinball = function(container, winId) {
     const W = 400, H = 620;
 
     const wrap = document.createElement('div');
-    wrap.style.cssText = 'display:flex; flex-direction:column; align-items:center; height:100%; background:#111; font-family:Tahoma, sans-serif; color:#0f0; box-sizing:border-box; padding:4px; gap:4px;';
+    wrap.style.cssText = 'display:flex; flex-direction:column; align-items:center; height:100%; width:100%; max-width:' + W + 'px; margin:0 auto; background:#111; font-family:Tahoma, sans-serif; color:#0f0; box-sizing:border-box; padding:4px; gap:4px; overflow:hidden;';
     wrap.innerHTML = `
-        <div style="width:${W}px; display:flex; justify-content:space-between; align-items:center; font-size:13px; padding:2px 4px;">
+        <div style="width:100%; display:flex; justify-content:space-between; align-items:center; font-size:13px; padding:2px 4px;">
             <span class="pb-score">SCORE: 0</span>
             <span class="pb-balls">BALL 1/3</span>
-            <button class="pb-newgame" style="font-size:11px; background:#333; color:#0f0; border:1px solid #0f0; border-radius:3px; padding:3px 8px;">New game</button>
+            <button class="pb-newgame" style="font-size:11px; background:#333; color:#0f0; border:1px solid #0f0; border-radius:3px; padding:3px 8px; -webkit-appearance:none; appearance:none;">New game</button>
         </div>
-        <canvas class="pb-canvas" width="${W}" height="${H}" style="background:#000; border:2px solid #555; touch-action:none;"></canvas>
-        <div style="display:flex; justify-content:space-between; width:${W}px; gap:6px;">
-            <button class="pb-left-btn" style="flex:1; padding:10px 0; font-size:13px; background:#333; color:#0f0; border:2px solid #0f0; border-radius:4px;">◀ FLIP</button>
-            <button class="pb-launch-btn" style="flex:1; padding:10px 0; font-size:13px; background:#333; color:#0f0; border:2px solid #0f0; border-radius:4px;">↑ LAUNCH</button>
-            <button class="pb-right-btn" style="flex:1; padding:10px 0; font-size:13px; background:#333; color:#0f0; border:2px solid #0f0; border-radius:4px;">FLIP ▶</button>
+        <canvas class="pb-canvas" width="${W}" height="${H}" style="background:#000; border:2px solid #555; touch-action:none; width:100%; height:auto; max-width:${W}px; display:block;"></canvas>
+        <div style="display:flex; justify-content:space-between; width:100%; gap:6px;">
+            <button class="pb-left-btn" style="flex:1; padding:10px 0; font-size:13px; background:#333; color:#0f0; border:2px solid #0f0; border-radius:4px; -webkit-appearance:none; appearance:none;">◀ FLIP</button>
+            <button class="pb-launch-btn" style="flex:1; padding:10px 0; font-size:13px; background:#333; color:#0f0; border:2px solid #0f0; border-radius:4px; -webkit-appearance:none; appearance:none;">↑ LAUNCH</button>
+            <button class="pb-right-btn" style="flex:1; padding:10px 0; font-size:13px; background:#333; color:#0f0; border:2px solid #0f0; border-radius:4px; -webkit-appearance:none; appearance:none;">FLIP ▶</button>
         </div>
         <div style="font-size:10px; opacity:0.6;">Tastiera: ← → per i flipper, barra spazio per il plunger</div>
     `;

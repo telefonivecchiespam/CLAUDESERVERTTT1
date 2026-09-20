@@ -89,8 +89,13 @@
         // A few apps need more room than the 400x300 default to look right.
         var defaultSizes = { chat: { width: 560, height: 420 }, chess: { width: 480, height: 480 }, mediaplayer: { width: 420, height: 480 }, pinball: { width: 430, height: 740 } };
         if (defaultSizes[appId]) {
-            win.style.width = defaultSizes[appId].width + 'px';
-            win.style.height = defaultSizes[appId].height + 'px';
+            // Clamp to the available viewport - without this, a window wider
+            // than the phone screen forces horizontal scrolling/"desktop mode"
+            // to even see its edges (buttons included) instead of just fitting.
+            var maxW = window.innerWidth - 16;
+            var maxH = window.innerHeight - 60; // leave room for the taskbar
+            win.style.width = Math.min(defaultSizes[appId].width, maxW) + 'px';
+            win.style.height = Math.min(defaultSizes[appId].height, maxH) + 'px';
         }
 
         var initFnName = 'init' + appId.charAt(0).toUpperCase() + appId.slice(1);
