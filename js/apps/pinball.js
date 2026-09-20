@@ -10,13 +10,13 @@ window.initPinball = function(container, winId) {
         <div style="width:${W}px; display:flex; justify-content:space-between; align-items:center; font-size:13px; padding:2px 4px;">
             <span class="pb-score">SCORE: 0</span>
             <span class="pb-balls">BALL 1/3</span>
-            <button class="pb-newgame" style="font-size:11px;">New game</button>
+            <button class="pb-newgame" style="font-size:11px; background:#333; color:#0f0; border:1px solid #0f0; border-radius:3px; padding:3px 8px;">New game</button>
         </div>
         <canvas class="pb-canvas" width="${W}" height="${H}" style="background:#000; border:2px solid #555; touch-action:none;"></canvas>
         <div style="display:flex; justify-content:space-between; width:${W}px; gap:6px;">
-            <button class="pb-left-btn" style="flex:1; padding:10px 0; font-size:13px;">◀ FLIP</button>
-            <button class="pb-launch-btn" style="flex:1; padding:10px 0; font-size:13px;">↑ LAUNCH</button>
-            <button class="pb-right-btn" style="flex:1; padding:10px 0; font-size:13px;">FLIP ▶</button>
+            <button class="pb-left-btn" style="flex:1; padding:10px 0; font-size:13px; background:#333; color:#0f0; border:2px solid #0f0; border-radius:4px;">◀ FLIP</button>
+            <button class="pb-launch-btn" style="flex:1; padding:10px 0; font-size:13px; background:#333; color:#0f0; border:2px solid #0f0; border-radius:4px;">↑ LAUNCH</button>
+            <button class="pb-right-btn" style="flex:1; padding:10px 0; font-size:13px; background:#333; color:#0f0; border:2px solid #0f0; border-radius:4px;">FLIP ▶</button>
         </div>
         <div style="font-size:10px; opacity:0.6;">Tastiera: ← → per i flipper, barra spazio per il plunger</div>
     `;
@@ -283,8 +283,15 @@ window.initPinball = function(container, winId) {
     function launch() {
         if (!inLane) return;
         charging = false;
-        ball.vx = -2.4 - Math.random() * 0.8; // curve into the main field
-        ball.vy = -6 - launchCharge * 0.55;
+        // Instead of expecting the ball to physically climb the launch
+        // corridor against gravity (which got it stuck jittering against
+        // the right-hand wall instead of ever reaching the top opening),
+        // place it directly at the corridor's opening into the main field
+        // and give it a leftward/upward push from there - far more reliable.
+        ball.x = 340;
+        ball.y = 45;
+        ball.vx = -3 - Math.random() * 1.2;
+        ball.vy = -3 - launchCharge * 0.28; // more charge = shoots further in before gravity arcs it back down
         inLane = false;
     }
 
