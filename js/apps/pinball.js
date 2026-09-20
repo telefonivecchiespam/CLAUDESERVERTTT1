@@ -34,16 +34,14 @@ window.initPinball = function(container, winId) {
     // ---- table geometry ----------------------------------------------
     const LANE_X = 365; // vertical plunger lane sits to the right of the main field
     const walls = [
-        { x1: 20, y1: 500, x2: 20, y2: 60 },
+        { x1: 20, y1: 460, x2: 20, y2: 60 },
         { x1: 20, y1: 60, x2: 60, y2: 20 },
         { x1: 60, y1: 20, x2: 335, y2: 20 },
         { x1: 335, y1: 20, x2: 355, y2: 60 },
-        { x1: 355, y1: 60, x2: 355, y2: 500 },
-        { x1: 355, y1: 500, x2: 295, y2: 580 }, // bottom-right triangular kicker - much steeper/bigger than before, the shallow cut wasn't enough to stop the ball settling in the corner
-        { x1: 295, y1: 580, x2: 235, y2: 580 }, // right outlane floor
-        // gap between x=235 and x=145 at y=580 is the drain, guarded by the flippers
-        { x1: 145, y1: 580, x2: 85, y2: 580 },  // left outlane floor
-        { x1: 85, y1: 580, x2: 20, y2: 500 }    // bottom-left triangular kicker (mirrored)
+        { x1: 355, y1: 60, x2: 355, y2: 460 },
+        { x1: 355, y1: 460, x2: 240, y2: 580 }, // right slide: a real ramp (not just a corner cut) funneling the ball straight down onto the right flipper instead of into the corner
+        // gap between x=240 and x=145 at y=580 is the drain, guarded by the flippers
+        { x1: 145, y1: 580, x2: 20, y2: 460 }   // left slide (mirrored)
     ];
 
     const bumpers = [
