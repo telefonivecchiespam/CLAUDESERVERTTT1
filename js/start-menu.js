@@ -89,15 +89,27 @@
 
         // A few apps need more room than the 400x300 default to look right.
         var defaultSizes = { chat: { width: 560, height: 420 }, chess: { width: 480, height: 480 }, mediaplayer: { width: 420, height: 480 }, pinball: { width: 430, height: 740 }, settings: { width: 380, height: 420 } };
-        if (defaultSizes[appId]) {
-            // Clamp to the available viewport - without this, a window wider
-            // than the phone screen forces horizontal scrolling/"desktop mode"
-            // to even see its edges (buttons included) instead of just fitting.
-            var maxW = window.innerWidth - 16;
-            var maxH = window.innerHeight - 60; // leave room for the taskbar
-            win.style.width = Math.min(defaultSizes[appId].width, maxW) + 'px';
-            win.style.height = Math.min(defaultSizes[appId].height, maxH) + 'px';
-        }
+        var baseSize = defaultSizes[appId] || { width: 400, height: 300 }; // 400x300 matches the .window CSS default
+        // Clamp to the available viewport - without this, a window wider
+        // than the phone screen forces horizontal scrolling/"desktop mode"
+        // to even see its edges (buttons included) instead of just fitting.
+        var maxW = window.innerWidth - 16;
+        var maxH = window.innerHeight - 60; // leave room for the taskbar
+        var finalWidth = Math.min(baseSize.width, maxW);
+        var finalHeight = Math.min(baseSize.height, maxH);
+        win.style.width = finalWidth + 'px';
+        win.style.height = finalHeight + 'px';
+
+        // The cascading open position (WindowManager.createWindow offsets each
+        // new window by 25px so they don't stack exactly on top of each other)
+        // was never checked against the final width/height above - on a phone
+        // screen that easily left a window opening already half off the right
+        // or bottom edge. Re-clamp left/top here so the whole window always
+        // starts fully on-screen regardless of size or cascade offset.
+        var curLeft = parseInt(win.style.left, 10) || 0;
+        var curTop = parseInt(win.style.top, 10) || 0;
+        win.style.left = Math.max(4, Math.min(curLeft, window.innerWidth - finalWidth - 4)) + 'px';
+        win.style.top = Math.max(4, Math.min(curTop, window.innerHeight - finalHeight - 50)) + 'px';
 
         var initFnName = 'init' + appId.charAt(0).toUpperCase() + appId.slice(1);
         var initFn = window[initFnName];
