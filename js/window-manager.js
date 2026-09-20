@@ -97,6 +97,14 @@
         const win = windows[winId];
         if (!win) return;
         win.classList.add('minimized');
+        // The .minimized CSS class alone (height:0/opacity:0) isn't enough:
+        // any window that has an inline style.height set directly (some apps
+        // set one at creation, and dragging a resize handle always does)
+        // outranks that class rule's height:0 by specificity, so the window
+        // kept its full-size, fully clickable hit-testing area underneath
+        // everything else even while invisible. display:none removes it from
+        // layout/hit-testing entirely regardless of any inline size.
+        win.style.display = 'none';
         if (window.appLog) window.appLog('SYS', 'Minimized window: ' + winId);
         let taskItem = document.querySelector(`.taskbar-item[data-win='${winId}']`);
         if (!taskItem) {
@@ -115,6 +123,7 @@
         const win = windows[winId];
         if (!win) return;
         win.classList.remove('minimized');
+        win.style.display = '';
         const taskItem = document.querySelector(`.taskbar-item[data-win='${winId}']`);
         if (taskItem) taskItem.remove();
         bringToFront(winId);
