@@ -6,12 +6,12 @@
     top: 0; left: 0;
     width: 100%; height: 100%;
     background: linear-gradient(to bottom, #0078D7, #000000);
-    overflow: auto; /* was 'hidden' - a window dragged past the edge used to just get clipped with no way back; now the desktop scrolls to reach it */
+    overflow: hidden; /* windows live in the separate #window-container, not as children of this div, so this never affected them - reverted to avoid an unrelated/confusing scrollbar on the icon grid */
     z-index: 0;
 }
 
 .wallpaper {
-    position: fixed; /* stays pinned to the viewport regardless of desktop scroll, instead of scrolling away with the content */
+    position: fixed; /* stays pinned to the viewport regardless of page scroll, instead of scrolling away with the content */
     width: 100%; height: 100%;
     background-image: url('assets/wallpaper.jpg');
     background-size: cover;
@@ -296,6 +296,7 @@
     overflow: hidden;
     margin: 0;
     padding: 0;
+    pointer-events: none;
 }
 
 .window.maximized {
