@@ -39,9 +39,9 @@ window.initPinball = function(container, winId) {
         { x1: 60, y1: 20, x2: 335, y2: 20 },
         { x1: 335, y1: 20, x2: 355, y2: 60 },
         { x1: 355, y1: 60, x2: 355, y2: 460 },
-        { x1: 355, y1: 460, x2: 240, y2: 580 }, // right slide: a real ramp (not just a corner cut) funneling the ball straight down onto the right flipper instead of into the corner
-        // gap between x=240 and x=145 at y=580 is the drain, guarded by the flippers
-        { x1: 145, y1: 580, x2: 20, y2: 460 }   // left slide (mirrored)
+        { x1: 355, y1: 460, x2: 255, y2: 580 }, // right slide: a real ramp (not just a corner cut) funneling the ball straight down onto the right flipper instead of into the corner
+        // gap between x=255 and x=125 at y=580 is the drain, guarded by the flippers
+        { x1: 125, y1: 580, x2: 20, y2: 460 }   // left slide (mirrored)
     ];
 
     const bumpers = [
@@ -57,11 +57,14 @@ window.initPinball = function(container, winId) {
 
     const flippers = {
         // Shorter flippers + these specific angles leave a real gap between
-        // the tips at rest instead of the tips crossing past each other -
-        // the previous angles made them overlap into an X shape, and the
-        // ball would settle motionless right at that crossing point forever.
-        left: { pivotX: 150, pivotY: 560, len: 48, restAngle: 0.85, activeAngle: -0.65, angle: 0.85, prevAngle: 0.85, pressed: false },
-        right: { pivotX: 235, pivotY: 560, len: 48, restAngle: Math.PI - 0.85, activeAngle: Math.PI + 0.65, angle: Math.PI - 0.85, prevAngle: Math.PI - 0.85, pressed: false }
+        // the tips at rest instead of the tips crossing past each other.
+        // The pivots themselves are also spaced further apart than before -
+        // the previous gap, once you subtract the flippers' own collision
+        // padding, left barely any room for the ball to actually fall
+        // through the drain at all (making the game nearly unloseable and
+        // making the ball snag on the flippers while sliding down the ramps).
+        left: { pivotX: 130, pivotY: 560, len: 48, restAngle: 0.85, activeAngle: -0.65, angle: 0.85, prevAngle: 0.85, pressed: false },
+        right: { pivotX: 255, pivotY: 560, len: 48, restAngle: Math.PI - 0.85, activeAngle: Math.PI + 0.65, angle: Math.PI - 0.85, prevAngle: Math.PI - 0.85, pressed: false }
     };
     flippers.left.angle = flippers.left.restAngle;
     flippers.right.angle = flippers.right.restAngle;
@@ -78,12 +81,16 @@ window.initPinball = function(container, winId) {
     let launchCharge = 0;
     let charging = false;
     let stuckFrames = 0;
+    let freeFrames = 0;
+    let stuckAttempts = 0;
 
     function resetBall() {
         ball = { x: LANE_X, y: 560, vx: 0, vy: 0, radius: 8 };
         inLane = true;
         launchCharge = 0;
         stuckFrames = 0;
+        freeFrames = 0;
+        stuckAttempts = 0;
     }
     resetBall();
 
@@ -143,7 +150,7 @@ window.initPinball = function(container, winId) {
 
     function handleFlipperCollision(f) {
         const tip = flipperTip(f);
-        const res = resolveCircleVsSegment(ball.x, ball.y, ball.radius, f.pivotX, f.pivotY, tip.x, tip.y, 9);
+        const res = resolveCircleVsSegment(ball.x, ball.y, ball.radius, f.pivotX, f.pivotY, tip.x, tip.y, 5);
         if (!res.hit) return;
         ball.x += res.nx * res.penetration;
         ball.y += res.ny * res.penetration;
@@ -222,18 +229,40 @@ window.initPinball = function(container, winId) {
         handleFlipperCollision(flippers.left);
         handleFlipperCollision(flippers.right);
 
+        // Hard safety clamp against the side/top edges - at high speed the
+        // ball can move far enough in a single frame to skip past a thin
+        // wall entirely before the next collision check runs ("tunneling"),
+        // which is what let it clip outside the table. The bottom is left
+        // open since falling past y=600 is the real, intended drain.
+        ball.x = Math.max(20, Math.min(360, ball.x));
+        if (ball.y < 15) ball.y = 15;
+
         // -- anti-stuck safety net: if the ball has been nearly motionless
-        // for too long (e.g. balanced in some geometric nook), give it a
-        // small random nudge rather than leaving it stuck there forever.
+        // for too long (e.g. wedged against the flippers), first try a
+        // nudge; if that alone doesn't free it within another second,
+        // teleport it to the open middle of the table instead of leaving it
+        // wedged indefinitely.
         if (Math.hypot(ball.vx, ball.vy) < 0.35) {
             stuckFrames++;
-            if (stuckFrames > 90) {
-                ball.vx += (Math.random() - 0.5) * 4;
-                ball.vy -= 3;
+            freeFrames = 0;
+            if (stuckFrames > 60) {
+                if (stuckAttempts >= 1) {
+                    ball.x = 200;
+                    ball.y = 250;
+                    ball.vx = (Math.random() - 0.5) * 3;
+                    ball.vy = 2;
+                    stuckAttempts = 0;
+                } else {
+                    ball.vx += (Math.random() - 0.5) * 5;
+                    ball.vy -= 4;
+                    stuckAttempts++;
+                }
                 stuckFrames = 0;
             }
         } else {
             stuckFrames = 0;
+            freeFrames++;
+            if (freeFrames > 60) stuckAttempts = 0; // only forgive past stuck attempts after it's clearly moving freely again
         }
 
         // -- drain: fell through the gap at the bottom between the flippers --
