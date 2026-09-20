@@ -56,8 +56,12 @@ window.initPinball = function(container, winId) {
     ];
 
     const flippers = {
-        left: { pivotX: 150, pivotY: 560, len: 68, restAngle: 0.55, activeAngle: -0.55, angle: 0.55, prevAngle: 0.55, pressed: false },
-        right: { pivotX: 235, pivotY: 560, len: 68, restAngle: Math.PI - 0.55, activeAngle: Math.PI + 0.55, angle: Math.PI - 0.55, prevAngle: Math.PI - 0.55, pressed: false }
+        // Shorter flippers + these specific angles leave a real gap between
+        // the tips at rest instead of the tips crossing past each other -
+        // the previous angles made them overlap into an X shape, and the
+        // ball would settle motionless right at that crossing point forever.
+        left: { pivotX: 150, pivotY: 560, len: 48, restAngle: 0.85, activeAngle: -0.65, angle: 0.85, prevAngle: 0.85, pressed: false },
+        right: { pivotX: 235, pivotY: 560, len: 48, restAngle: Math.PI - 0.85, activeAngle: Math.PI + 0.65, angle: Math.PI - 0.85, prevAngle: Math.PI - 0.85, pressed: false }
     };
     flippers.left.angle = flippers.left.restAngle;
     flippers.right.angle = flippers.right.restAngle;
@@ -73,11 +77,13 @@ window.initPinball = function(container, winId) {
     let inLane = true;
     let launchCharge = 0;
     let charging = false;
+    let stuckFrames = 0;
 
     function resetBall() {
         ball = { x: LANE_X, y: 560, vx: 0, vy: 0, radius: 8 };
         inLane = true;
         launchCharge = 0;
+        stuckFrames = 0;
     }
     resetBall();
 
@@ -215,6 +221,20 @@ window.initPinball = function(container, winId) {
         // -- flippers collision --
         handleFlipperCollision(flippers.left);
         handleFlipperCollision(flippers.right);
+
+        // -- anti-stuck safety net: if the ball has been nearly motionless
+        // for too long (e.g. balanced in some geometric nook), give it a
+        // small random nudge rather than leaving it stuck there forever.
+        if (Math.hypot(ball.vx, ball.vy) < 0.35) {
+            stuckFrames++;
+            if (stuckFrames > 90) {
+                ball.vx += (Math.random() - 0.5) * 4;
+                ball.vy -= 3;
+                stuckFrames = 0;
+            }
+        } else {
+            stuckFrames = 0;
+        }
 
         // -- drain: fell through the gap at the bottom between the flippers --
         if (ball.y > 600) {
