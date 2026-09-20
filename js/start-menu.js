@@ -77,7 +77,8 @@
             chess: 'Chess',
             chat: 'Chat',
             privacy: 'Privacy',
-            mediaplayer: 'Media Player'
+            mediaplayer: 'Media Player',
+            pinball: '3D Pinball'
         };
 
         var win = WindowManager.createWindow(appId, titleMap[appId] || 'App', '');
@@ -86,7 +87,7 @@
         if (!contentDiv) return;
 
         // A few apps need more room than the 400x300 default to look right.
-        var defaultSizes = { chat: { width: 560, height: 420 }, chess: { width: 480, height: 480 }, mediaplayer: { width: 420, height: 480 } };
+        var defaultSizes = { chat: { width: 560, height: 420 }, chess: { width: 480, height: 480 }, mediaplayer: { width: 420, height: 480 }, pinball: { width: 430, height: 740 } };
         if (defaultSizes[appId]) {
             win.style.width = defaultSizes[appId].width + 'px';
             win.style.height = defaultSizes[appId].height + 'px';
