@@ -34,20 +34,27 @@ window.initPinball = function(container, winId) {
     // ---- table geometry ----------------------------------------------
     const LANE_X = 365; // vertical plunger lane sits to the right of the main field
     const walls = [
-        { x1: 20, y1: 580, x2: 20, y2: 60 },
+        { x1: 20, y1: 560, x2: 20, y2: 60 },
         { x1: 20, y1: 60, x2: 60, y2: 20 },
         { x1: 60, y1: 20, x2: 335, y2: 20 },
         { x1: 335, y1: 20, x2: 355, y2: 60 },
-        { x1: 355, y1: 60, x2: 355, y2: 580 },
-        { x1: 355, y1: 580, x2: 235, y2: 580 }, // right outlane floor
-        { x1: 145, y1: 580, x2: 20, y2: 580 }   // left outlane floor
-        // gap between x=145 and x=235 at y=580 is the drain, guarded by the flippers
+        { x1: 355, y1: 60, x2: 355, y2: 560 },
+        { x1: 355, y1: 560, x2: 330, y2: 580 }, // bottom-right diagonal kicker - a plain right angle here let the ball come to rest in the corner
+        { x1: 330, y1: 580, x2: 235, y2: 580 }, // right outlane floor
+        // gap between x=235 and x=145 at y=580 is the drain, guarded by the flippers
+        { x1: 145, y1: 580, x2: 50, y2: 580 },  // left outlane floor
+        { x1: 50, y1: 580, x2: 20, y2: 560 }    // bottom-left diagonal kicker (same fix, mirrored)
     ];
 
     const bumpers = [
         { x: 130, y: 190, r: 18, flash: 0 },
         { x: 270, y: 190, r: 18, flash: 0 },
-        { x: 200, y: 125, r: 20, flash: 0 }
+        { x: 200, y: 125, r: 20, flash: 0 },
+        // extra small posts so the lower-middle of the table isn't empty
+        // dead space where the ball just free-falls straight to the drain
+        { x: 90, y: 340, r: 12, flash: 0 },
+        { x: 310, y: 340, r: 12, flash: 0 },
+        { x: 200, y: 400, r: 12, flash: 0 }
     ];
 
     const flippers = {

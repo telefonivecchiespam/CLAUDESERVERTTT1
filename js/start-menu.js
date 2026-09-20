@@ -78,7 +78,8 @@
             chat: 'Chat',
             privacy: 'Privacy',
             mediaplayer: 'Media Player',
-            pinball: '3D Pinball'
+            pinball: '3D Pinball',
+            settings: 'Impostazioni'
         };
 
         var win = WindowManager.createWindow(appId, titleMap[appId] || 'App', '');
@@ -87,7 +88,7 @@
         if (!contentDiv) return;
 
         // A few apps need more room than the 400x300 default to look right.
-        var defaultSizes = { chat: { width: 560, height: 420 }, chess: { width: 480, height: 480 }, mediaplayer: { width: 420, height: 480 }, pinball: { width: 430, height: 740 } };
+        var defaultSizes = { chat: { width: 560, height: 420 }, chess: { width: 480, height: 480 }, mediaplayer: { width: 420, height: 480 }, pinball: { width: 430, height: 740 }, settings: { width: 380, height: 420 } };
         if (defaultSizes[appId]) {
             // Clamp to the available viewport - without this, a window wider
             // than the phone screen forces horizontal scrolling/"desktop mode"

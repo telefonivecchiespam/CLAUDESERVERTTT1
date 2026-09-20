@@ -15,6 +15,7 @@ window.initPrivacy = function(container) {
                 <li><code>notepad_data</code> — il testo del Blocco Note.</li>
                 <li><code>browser_bookmarks_v1</code> — i preferiti salvati nel Browser.</li>
                 <li><code>browser_recent_v1</code> — la cronologia recente del Browser.</li>
+                <li><code>settings_wallpaper</code>, <code>settings_wallpaper_opacity</code>, <code>settings_log_visible</code> — le tue preferenze dall'app Impostazioni (incluso lo sfondo che carichi, se lo carichi).</li>
             </ul>
             <p>Questi dati restano solo sul tuo dispositivo, non vengono mai inviati a nessun server
             di questo progetto, e si cancellano se svuoti i dati del sito dal tuo browser.</p>
