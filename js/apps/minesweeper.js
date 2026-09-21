@@ -2,7 +2,7 @@
 (function() {
     'use strict';
 
-    window.initMinesweeper = function(container) {
+    window.initMinesweeper = function(container, winId) {
         container.innerHTML = '';
         container.style.display = 'flex';
         container.style.flexDirection = 'column';
@@ -192,5 +192,9 @@
         }
 
         initBoard();
+
+        if (window.WindowManager && typeof WindowManager.registerCleanup === 'function') {
+            WindowManager.registerCleanup(winId, () => stopTimer());
+        }
     };
 })();

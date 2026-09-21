@@ -147,7 +147,11 @@
                         item.addEventListener('dblclick', () => enter(name));
                     } else {
                         item.addEventListener('dblclick', () => {
-                            alert('"' + name + '" can\'t be opened - this is a simulated filesystem, not a real disk.');
+                            if (window.showErrorDialog) {
+                                window.showErrorDialog('Cannot Open File', '"' + name + '" can\'t be opened - this is a simulated filesystem, not a real disk.', 'warning');
+                            } else {
+                                alert('"' + name + '" can\'t be opened - this is a simulated filesystem, not a real disk.');
+                            }
                         });
                     }
                     grid.appendChild(item);
@@ -175,7 +179,7 @@
         });
         if (window.__recycleBin.length > 50) window.__recycleBin.pop();
         if (window.appLog) window.appLog('INFO_RECYCLE', 'Item moved to Recycle Bin');
-        if (window.__recycleBinRefresh) window.__recycleBinRefresh();
+        if (window.__recycleBinRefreshers) window.__recycleBinRefreshers.forEach(fn => fn());
     };
 
     window.initRecycle = function(container, winId) {
@@ -270,11 +274,16 @@
         }
 
         render();
-        window.__recycleBinRefresh = render;
+        // A Set instead of a single variable - with just one variable, opening
+        // a second Recycle Bin window silently overwrote the first one's
+        // refresh function, so only the most-recently-opened window ever got
+        // live updates when something new was sent to the bin.
+        if (!window.__recycleBinRefreshers) window.__recycleBinRefreshers = new Set();
+        window.__recycleBinRefreshers.add(render);
 
         if (typeof WindowManager !== 'undefined' && winId) {
             WindowManager.registerCleanup(winId, () => {
-                if (window.__recycleBinRefresh === render) window.__recycleBinRefresh = null;
+                window.__recycleBinRefreshers.delete(render);
             });
         }
     };

@@ -39,9 +39,9 @@ window.initPinball = function(container, winId) {
         { x1: 60, y1: 20, x2: 335, y2: 20 },
         { x1: 335, y1: 20, x2: 355, y2: 60 },
         { x1: 355, y1: 60, x2: 355, y2: 460 },
-        { x1: 355, y1: 460, x2: 255, y2: 580 }, // right slide: a real ramp (not just a corner cut) funneling the ball straight down onto the right flipper instead of into the corner
-        // gap between x=255 and x=125 at y=580 is the drain, guarded by the flippers
-        { x1: 125, y1: 580, x2: 20, y2: 460 }   // left slide (mirrored)
+        { x1: 355, y1: 460, x2: 245, y2: 580 }, // right slide: a real ramp (not just a corner cut) funneling the ball straight down onto the right flipper instead of into the corner
+        // gap between x=245 and x=140 at y=580 is the drain, guarded by the flippers
+        { x1: 140, y1: 580, x2: 20, y2: 460 }   // left slide (mirrored)
     ];
 
     const bumpers = [
@@ -58,13 +58,13 @@ window.initPinball = function(container, winId) {
     const flippers = {
         // Shorter flippers + these specific angles leave a real gap between
         // the tips at rest instead of the tips crossing past each other.
-        // The pivots themselves are also spaced further apart than before -
-        // the previous gap, once you subtract the flippers' own collision
-        // padding, left barely any room for the ball to actually fall
-        // through the drain at all (making the game nearly unloseable and
-        // making the ball snag on the flippers while sliding down the ramps).
-        left: { pivotX: 130, pivotY: 560, len: 48, restAngle: 0.85, activeAngle: -0.65, angle: 0.85, prevAngle: 0.85, pressed: false },
-        right: { pivotX: 255, pivotY: 560, len: 48, restAngle: Math.PI - 0.85, activeAngle: Math.PI + 0.65, angle: Math.PI - 0.85, prevAngle: Math.PI - 0.85, pressed: false }
+        // The pivot spacing here is a middle ground: wide enough that the
+        // flippers' own collision padding doesn't seal the gap shut (that
+        // was the earlier bug), but not so wide that a launched ball falls
+        // straight down the open middle without ever touching a flipper
+        // (which is what started happening after the gap was widened).
+        left: { pivotX: 140, pivotY: 560, len: 52, restAngle: 0.85, activeAngle: -0.65, angle: 0.85, prevAngle: 0.85, pressed: false },
+        right: { pivotX: 245, pivotY: 560, len: 52, restAngle: Math.PI - 0.85, activeAngle: Math.PI + 0.65, angle: Math.PI - 0.85, prevAngle: Math.PI - 0.85, pressed: false }
     };
     flippers.left.angle = flippers.left.restAngle;
     flippers.right.angle = flippers.right.restAngle;
@@ -268,7 +268,7 @@ window.initPinball = function(container, winId) {
         // -- drain: fell through the gap at the bottom between the flippers --
         if (ball.y > 600) {
             ballsLeft--;
-            ballsEl.textContent = 'BALL ' + (4 - ballsLeft) + '/3';
+            ballsEl.textContent = 'BALL ' + Math.min(4 - ballsLeft, 3) + '/3';
             if (ballsLeft <= 0) {
                 gameOver = true;
             } else {

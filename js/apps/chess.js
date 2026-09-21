@@ -1,6 +1,6 @@
 // Chess Game - Windows 7 Clone Integration
 (function() {
-    window.initChess = function(container) {
+    window.initChess = function(container, winId) {
         container.innerHTML = '';
 
         // Title bar
@@ -642,6 +642,15 @@
         singleBtn.style.border = '2px inset #c0c0c0';
         initializeBoard();
         if (window.appLog) window.appLog('INFO_CHESS', 'Chess game initialized');
+
+        // Closing the window with the X bypassed every in-app "leave/rematch"
+        // button that closed the socket, so the connection stayed open on
+        // the server indefinitely.
+        if (window.WindowManager && typeof WindowManager.registerCleanup === 'function') {
+            WindowManager.registerCleanup(winId, () => {
+                if (ws) { ws.close(); ws = null; }
+            });
+        }
     };
 
     // Helper function for room code generation

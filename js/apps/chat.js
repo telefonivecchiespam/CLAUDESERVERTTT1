@@ -573,7 +573,11 @@
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             } catch (err) {
-                alert('Could not access your microphone: ' + err.message);
+                if (window.showErrorDialog) {
+                    window.showErrorDialog('Chat - Microphone Error', 'Could not access your microphone: ' + err.message, 'error');
+                } else {
+                    alert('Could not access your microphone: ' + err.message);
+                }
                 if (window.appLog) window.appLog('ERR_CHAT', 'getUserMedia failed: ' + err.name + ' - ' + err.message);
                 return;
             }
@@ -872,7 +876,11 @@
                     break;
 
                 case 'join_error':
-                    alert(msg.message);
+                    if (window.showErrorDialog) {
+                        window.showErrorDialog('Chat - Cannot Join', msg.message, 'warning');
+                    } else {
+                        alert(msg.message);
+                    }
                     break;
 
                 case 'channel_created': {

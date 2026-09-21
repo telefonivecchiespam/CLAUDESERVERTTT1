@@ -1,7 +1,7 @@
 // Tic Tac Toe - Singleplayer vs Bot & Multiplayer via WebSocket
 // ip https://cautious-pancake-69qj4pq9rpp73xrvr-8080.app.github.dev/
 (function() {
-    window.initTictactoe = function(container) {
+    window.initTictactoe = function(container, winId) {
         container.innerHTML = '';
         const title = document.createElement('div');
         title.textContent = 'Tic Tac Toe';
@@ -485,5 +485,14 @@
         // Init
         singleBtn.style.border = '2px inset #c0c0c0';
         startSingleplayer();
+
+        // Without this, closing the window with the X (rather than an
+        // in-app "leave" action) left the WebSocket connection open on the
+        // server indefinitely, holding a game room open for no reason.
+        if (window.WindowManager && typeof WindowManager.registerCleanup === 'function') {
+            WindowManager.registerCleanup(winId, () => {
+                if (socket) { socket.close(); socket = null; }
+            });
+        }
     };
 })();
