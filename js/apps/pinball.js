@@ -192,48 +192,52 @@ window.initPinball = function(container, winId) {
         const speed = Math.hypot(ball.vx, ball.vy);
         const MAX_SPEED = 16;
         if (speed > MAX_SPEED) { ball.vx = ball.vx / speed * MAX_SPEED; ball.vy = ball.vy / speed * MAX_SPEED; }
-        ball.x += ball.vx;
-        ball.y += ball.vy;
 
-        // -- walls --
-        walls.forEach(w => {
-            const res = resolveCircleVsSegment(ball.x, ball.y, ball.radius, w.x1, w.y1, w.x2, w.y2, 0);
-            if (res.hit) {
-                ball.x += res.nx * res.penetration;
-                ball.y += res.ny * res.penetration;
-                const dot = ball.vx * res.nx + ball.vy * res.ny;
-                ball.vx -= (1 + RESTITUTION) * dot * res.nx;
-                ball.vy -= (1 + RESTITUTION) * dot * res.ny;
-            }
-        });
+        // Move in small sub-steps rather than one big jump. Walls have zero
+        // thickness, so a fast ball moving further per frame than a wall is
+        // "thick" can land past it before any collision check ever runs -
+        // classic tunneling. Capping each sub-step to ~3px (well under the
+        // ball's own 8px radius) makes that effectively impossible.
+        const totalMove = Math.hypot(ball.vx, ball.vy);
+        const subSteps = Math.max(1, Math.ceil(totalMove / 3));
+        for (let s = 0; s < subSteps; s++) {
+            ball.x += ball.vx / subSteps;
+            ball.y += ball.vy / subSteps;
 
-        // -- bumpers --
-        bumpers.forEach(b => {
-            const dx = ball.x - b.x, dy = ball.y - b.y;
-            const dist = Math.hypot(dx, dy);
-            if (dist < ball.radius + b.r && dist > 0.0001) {
-                const nx = dx / dist, ny = dy / dist;
-                ball.x = b.x + nx * (ball.radius + b.r);
-                ball.y = b.y + ny * (ball.radius + b.r);
-                const dot = ball.vx * nx + ball.vy * ny;
-                const bounce = 6.5;
-                ball.vx = nx * bounce;
-                ball.vy = ny * bounce;
-                b.flash = 8;
-                addScore(10);
-                beep(440, 0.08);
-            }
-        });
+            walls.forEach(w => {
+                const res = resolveCircleVsSegment(ball.x, ball.y, ball.radius, w.x1, w.y1, w.x2, w.y2, 0);
+                if (res.hit) {
+                    ball.x += res.nx * res.penetration;
+                    ball.y += res.ny * res.penetration;
+                    const dot = ball.vx * res.nx + ball.vy * res.ny;
+                    ball.vx -= (1 + RESTITUTION) * dot * res.nx;
+                    ball.vy -= (1 + RESTITUTION) * dot * res.ny;
+                }
+            });
 
-        // -- flippers collision --
-        handleFlipperCollision(flippers.left);
-        handleFlipperCollision(flippers.right);
+            bumpers.forEach(b => {
+                const dx = ball.x - b.x, dy = ball.y - b.y;
+                const dist = Math.hypot(dx, dy);
+                if (dist < ball.radius + b.r && dist > 0.0001) {
+                    const nx = dx / dist, ny = dy / dist;
+                    ball.x = b.x + nx * (ball.radius + b.r);
+                    ball.y = b.y + ny * (ball.radius + b.r);
+                    const bounce = 6.5;
+                    ball.vx = nx * bounce;
+                    ball.vy = ny * bounce;
+                    b.flash = 8;
+                    addScore(10);
+                    beep(440, 0.08);
+                }
+            });
 
-        // Hard safety clamp against the side/top edges - at high speed the
-        // ball can move far enough in a single frame to skip past a thin
-        // wall entirely before the next collision check runs ("tunneling"),
-        // which is what let it clip outside the table. The bottom is left
-        // open since falling past y=600 is the real, intended drain.
+            handleFlipperCollision(flippers.left);
+            handleFlipperCollision(flippers.right);
+        }
+
+        // Hard safety clamp against the side/top edges - belt-and-suspenders
+        // on top of the sub-stepping above. The bottom is left open since
+        // falling past y=600 is the real, intended drain.
         ball.x = Math.max(20, Math.min(360, ball.x));
         if (ball.y < 15) ball.y = 15;
 
