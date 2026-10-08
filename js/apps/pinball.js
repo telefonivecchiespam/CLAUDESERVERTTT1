@@ -365,7 +365,29 @@ window.initPinball = function(container, winId) {
     newGameBtn.addEventListener('click', newGame);
 
     // ---- input: keyboard (desktop) ----
+    // These listeners live on `document`, so without the checks below they
+    // swallowed Space and the arrow keys for the WHOLE site for as long as a
+    // Pinball window existed (even minimized or behind other windows) -
+    // making it impossible to type a space in Notepad/Chat/the Browser
+    // address bar, or move the text cursor with the arrows.
+    function isTypingTarget(t) {
+        if (!t || !t.tagName) return false;
+        const tag = t.tagName.toUpperCase();
+        return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable;
+    }
+    function isActiveWindow() {
+        const win = wrap.closest('.window');
+        if (!win || win.style.display === 'none') return false;
+        let maxZ = 0;
+        document.querySelectorAll('.window').forEach(w => {
+            if (w.style.display === 'none') return;
+            const z = parseInt(w.style.zIndex, 10) || 0;
+            if (z > maxZ) maxZ = z;
+        });
+        return (parseInt(win.style.zIndex, 10) || 0) >= maxZ; // only the frontmost window reacts
+    }
     function onKeyDown(e) {
+        if (isTypingTarget(e.target) || !isActiveWindow()) return;
         if (e.key === 'ArrowLeft') { flippers.left.pressed = true; e.preventDefault(); }
         else if (e.key === 'ArrowRight') { flippers.right.pressed = true; e.preventDefault(); }
         else if (e.key === ' ') {
@@ -374,6 +396,8 @@ window.initPinball = function(container, winId) {
             if (inLane) charging = true;
         }
     }
+    // keyup is deliberately NOT gated: releasing must always un-press a
+    // flipper / fire a charged launch, even if focus moved away mid-press.
     function onKeyUp(e) {
         if (e.key === 'ArrowLeft') flippers.left.pressed = false;
         else if (e.key === 'ArrowRight') flippers.right.pressed = false;
@@ -398,7 +422,12 @@ window.initPinball = function(container, winId) {
     let rafId = null;
     function loop() {
         if (!running) return;
-        if (!gameOver) step(); else draw();
+        // A minimized window is display:none (offsetParent === null): keep
+        // the loop alive so it resumes on restore, but skip the physics and
+        // drawing instead of burning CPU/battery on something nobody sees.
+        if (wrap.offsetParent !== null) {
+            if (!gameOver) step(); else draw();
+        }
         rafId = requestAnimationFrame(loop);
     }
     loop();

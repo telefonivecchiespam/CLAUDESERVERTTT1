@@ -15,7 +15,7 @@ window.showErrorDialog = function(title, message, kind) {
 
     box.innerHTML = `
         <div style="background:linear-gradient(to right, #000080, #1084d0); color:#fff; font-weight:bold; padding:4px 6px; display:flex; justify-content:space-between; align-items:center;">
-            <span>${title || 'Errore'}</span>
+            <span class="err-dlg-title"></span>
             <span class="err-dlg-close" style="cursor:pointer; background:#c0c0c0; color:#000; width:16px; height:14px; text-align:center; line-height:14px; border:1px solid; border-color:#fff #404040 #404040 #fff;">×</span>
         </div>
         <div style="display:flex; gap:12px; padding:16px; align-items:flex-start;">
@@ -29,19 +29,26 @@ window.showErrorDialog = function(title, message, kind) {
     // Message text set via textContent (not innerHTML) so error text coming
     // from things like ws error messages or filenames can never be
     // interpreted as HTML.
+    box.querySelector('.err-dlg-title').textContent = title || 'Errore';
     box.querySelector('.err-dlg-message').textContent = message || '';
 
     overlay.appendChild(box);
     document.body.appendChild(overlay);
 
-    function close() { overlay.remove(); }
+    // One close() that always removes the keydown listener. Before, the
+    // listener was only removed when closing via Enter/Esc, so closing with
+    // the OK button or the x left a stale listener on `document` forever.
+    function onKey(e) {
+        if (e.key === 'Enter' || e.key === 'Escape') close();
+    }
+    function close() {
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+    }
     box.querySelector('.err-dlg-ok').addEventListener('click', close);
     box.querySelector('.err-dlg-close').addEventListener('click', close);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
-    const okBtn = box.querySelector('.err-dlg-ok');
-    okBtn.focus();
-    document.addEventListener('keydown', function onKey(e) {
-        if (e.key === 'Enter' || e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
-    });
+    box.querySelector('.err-dlg-ok').focus();
+    document.addEventListener('keydown', onKey);
 };
