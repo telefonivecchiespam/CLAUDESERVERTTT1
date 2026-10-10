@@ -15,6 +15,7 @@ window.initPrivacy = function(container) {
                 <li><code>notepad_data</code> — il testo del Blocco Note.</li>
                 <li><code>browser_bookmarks_v1</code> — i preferiti salvati nel Browser.</li>
                 <li><code>browser_recent_v1</code> — la cronologia recente del Browser.</li>
+                <li><code>wordpad_draft</code> — la bozza del documento di WordPad (si aggiorna mentre scrivi, così non la perdi se chiudi per sbaglio).</li>
                 <li><code>settings_wallpaper</code>, <code>settings_wallpaper_opacity</code>, <code>settings_log_visible</code> — le tue preferenze dall'app Impostazioni (incluso lo sfondo che carichi, se lo carichi).</li>
             </ul>
             <p>Questi dati restano solo sul tuo dispositivo, non vengono mai inviati a nessun server
@@ -58,6 +59,12 @@ window.initPrivacy = function(container) {
             <p>I file audio/video che apri restano solo nel tuo browser (Object URL locale): non vengono
             mai caricati su nessun server, nemmeno i nostri. La playlist non viene salvata: va ricreata
             ad ogni apertura dell'app.</p>
+
+            <h3 style="font-size:13px; margin:14px 0 4px;">📃 WordPad</h3>
+            <p>I documenti che scrivi, apri o salvi (.rtf, .txt) vengono elaborati solo nel tuo browser:
+            non vengono mai caricati su nessun server. Il salvataggio è un normale download sul tuo
+            dispositivo. L'unica copia che resta nel sito è la bozza automatica in <code>localStorage</code>
+            (cancellala svuotando il documento con "Nuovo", o cancellando i dati del sito dal browser).</p>
 
             <h3 style="font-size:13px; margin:14px 0 4px;">🎮 Tris, Scacchi</h3>
             <p>Solo il nome scelto per la partita viene inviato al server di gioco, e solo per la durata
