@@ -25,6 +25,10 @@
     const FONT_LIST = ['Calibri', 'Arial', 'Times New Roman', 'Courier New', 'Georgia', 'Verdana', 'Tahoma', 'Comic Sans MS'];
     const SIZE_LIST = [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72];
     const MAX_OPEN_BYTES = 5 * 1024 * 1024;
+    // Word/WordPad "single" line spacing is the font's natural line height
+    // (~1.22 x the size for Calibri), not 1.0 x. The editor shows
+    // multiplier x LH_BASE; the RTF stores the plain multiplier (\sl240 = 1.0).
+    const LH_BASE = 1.22;
 
     // =====================================================================
     // Colour / length helpers
@@ -78,6 +82,28 @@
         if (!m) return 0;
         const v = parseFloat(m[1]);
         return m[2] === 'pt' ? v : v * 0.75;
+    }
+
+    // colour from a CSS value; 'transparent' really means "none" (null), while
+    // inherit/unparseable values leave the current colour alone
+    function cssColor(val, current) {
+        if (!val) return current;
+        const v = String(val).trim().toLowerCase();
+        if (v === 'transparent') return null;
+        if (v === 'inherit' || v === 'initial' || v === 'unset' || v === 'currentcolor') return current;
+        return parseColor(v) || current;
+    }
+
+    // CSS line-height on a block -> Word-style multiplier (1.0 = single), or 0
+    function readLineMult(el) {
+        const v = el.style && el.style.lineHeight;
+        if (!v) return 0;
+        let css = 0;
+        if (/^[\d.]+$/.test(v)) css = parseFloat(v);
+        else if (/%$/.test(v)) css = parseFloat(v) / 100;
+        else return 0;
+        if (!isFinite(css) || css <= 0) return 0;
+        return Math.min(5, Math.max(0.5, Math.round(css / LH_BASE * 20) / 20));
     }
 
     function firstFamily(str) {
@@ -146,7 +172,7 @@
         let runs = '';
         let hasContent = false;
         let pendingBreaks = 0;
-        let props = { align: '', baseLi: 0, li: 0, list: null, listUsed: false };
+        let props = { align: '', baseLi: 0, li: 0, list: null, listUsed: false, lineMult: 1 };
         const listStack = [];
 
         function flushPara() {
@@ -163,6 +189,7 @@
             const fi = isList ? -360 : 0;
             if (fi) s += '\\fi' + fi;
             if (li) s += '\\li' + li;
+            if (props.lineMult && Math.abs(props.lineMult - 1) > 0.001) s += '\\sl' + Math.round(props.lineMult * 240) + '\\slmult1';
             s += ({ left: '\\ql', center: '\\qc', right: '\\qr', justify: '\\qj' }[props.align] || '');
             s += ' ' + runs + '\\par\n';
             paras.push(s);
@@ -229,10 +256,8 @@
                 if (pt) c.half = Math.max(2, Math.round(pt * 2));
                 const fam = firstFamily(st.fontFamily);
                 if (fam) c.face = fam;
-                const col = parseColor(st.color);
-                if (col) c.color = col;
-                const bg = parseColor(st.backgroundColor);
-                if (bg) c.bg = bg;
+                if (st.color) c.color = cssColor(st.color, c.color);
+                if (st.backgroundColor) c.bg = cssColor(st.backgroundColor, c.bg);
             }
             return c;
         }
@@ -250,6 +275,8 @@
             p.listUsed = false;
             const al = readAlign(el);
             if (al) p.align = al;
+            const lm = readLineMult(el);
+            if (lm) p.lineMult = lm;
             let indent = el.style ? lengthToTwips(el.style.marginLeft) : 0;
             if (tag === 'BLOCKQUOTE' && !(el.style && el.style.marginLeft)) indent = 600; // browser default 40px
             p.baseLi = saved.baseLi + indent;
@@ -298,7 +325,7 @@
         return '{\\rtf1\\ansi\\ansicpg1252\\deff0\\deflang1040\\uc1'
             + '{\\fonttbl' + fonttbl + '}'
             + colortbl
-            + '\\paperw11906\\paperh16838\\margl1417\\margr1417\\margt1417\\margb1417\\viewkind4\\f0\\fs' + DEFAULT_HALF_PT + '\n'
+            + '\\paperw11906\\paperh16838\\margl1800\\margr1800\\margt1440\\margb1440\\viewkind4\\f0\\fs' + DEFAULT_HALF_PT + '\n'
             + paras.join('')
             + '}\n';
     }
@@ -330,7 +357,7 @@
         const stack = [];
         const paras = [];
         let state = { b: false, i: false, u: false, s: false, sup: false, sub: false, fs: 24, f: 0, cf: 0, hl: 0, uc: 1, skip: 0, dest: null };
-        let cur = { align: '', li: 0, fi: 0, list: null, runs: [] };
+        let cur = { align: '', li: 0, fi: 0, sl: 0, slmult: 0, list: null, runs: [] };
         let fontNo = 0, fontBuf = '';
         let rgb = { r: null, g: null, b: null };
         let markerBuf = '';
@@ -356,7 +383,7 @@
         function endParagraph() {
             paras.push(cur);
             // paragraph properties carry over to the next paragraph until \pard
-            cur = { align: cur.align, li: cur.li, fi: cur.fi, list: null, runs: [] };
+            cur = { align: cur.align, li: cur.li, fi: cur.fi, sl: cur.sl, slmult: cur.slmult, list: null, runs: [] };
         }
         function finishMarker() {
             const t = markerBuf.replace(/\s+/g, '');
@@ -464,7 +491,7 @@
 
             switch (word) {
                 case 'par': if (state.dest === null) endParagraph(); break;
-                case 'pard': cur.align = ''; cur.li = 0; cur.fi = 0; cur.list = null; break;
+                case 'pard': cur.align = ''; cur.li = 0; cur.fi = 0; cur.sl = 0; cur.slmult = 0; cur.list = null; break;
                 case 'plain': state.b = state.i = state.u = state.s = state.sup = state.sub = false; state.cf = 0; state.hl = 0; break;
                 case 'b': state.b = param !== 0; break;
                 case 'i': state.i = param !== 0; break;
@@ -482,6 +509,8 @@
                 case 'qj': cur.align = 'justify'; break;
                 case 'li': cur.li = param || 0; break;
                 case 'fi': cur.fi = param || 0; break;
+                case 'sl': cur.sl = param || 0; break;
+                case 'slmult': cur.slmult = param === null ? 1 : param; break;
                 case 'uc': state.uc = param === null ? 1 : param; break;
                 case 'tab': emit('\t'); break;
                 case 'line': emit('\n'); break;
@@ -561,6 +590,8 @@
                 if (p.fi > 0) block.style.textIndent = Math.round(p.fi / 15) + 'px';
             }
             if (p.align) block.style.textAlign = p.align;
+            const lineMult = (p.slmult === 1 && p.sl > 0) ? p.sl / 240 : 0;
+            if (lineMult && Math.abs(lineMult - 1) > 0.01) block.style.lineHeight = String(Math.round(lineMult * LH_BASE * 100) / 100);
             if (!p.runs.length) block.appendChild(doc.createElement('br'));
             else p.runs.forEach(function (r) { appendRun(block, r); });
         });
@@ -578,7 +609,7 @@
         'DIV', 'P', 'BR', 'UL', 'OL', 'LI', 'BLOCKQUOTE']);
     const DROP_WITH_CONTENT = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META', 'NOSCRIPT', 'TEMPLATE']);
     const ALLOWED_STYLE_PROPS = new Set(['font-weight', 'font-style', 'text-decoration', 'text-decoration-line', 'font-size',
-        'font-family', 'color', 'background-color', 'text-align', 'margin-left', 'text-indent']);
+        'font-family', 'color', 'background-color', 'text-align', 'margin-left', 'text-indent', 'line-height']);
 
     function cleanStyle(str) {
         return String(str).split(';').map(function (decl) {
@@ -652,57 +683,199 @@
     }
 
     // =====================================================================
-    // The app
+    // The app - a ribbon UI modelled on the Windows 10 WordPad
     // =====================================================================
+    const LINE_SPACINGS = [1.0, 1.15, 1.5, 2.0, 2.5, 3.0];
+    // Paint-style palette, the same set the real WordPad offers
+    const PALETTE = ['#000000', '#7f7f7f', '#880015', '#ed1c24', '#ff7f27', '#fff200', '#22b14c', '#00a2e8', '#3f48cc', '#a349a4',
+        '#ffffff', '#c3c3c3', '#b97a57', '#ffaec9', '#ffc90e', '#efe4b0', '#b5e61d', '#99d9ea', '#7092be', '#c8bfe7'];
+    const RULER_CM_PX = 37.795;        // 1 cm at 96 dpi
+    const SHEET_PX = 794;              // A4 width at 96 dpi
+    const SHEET_MARGIN_PX = 120;       // 1.25 in, WordPad's default left/right margin
+    const NARROW_BELOW_PX = 830;       // below this (after zoom) the sheet fills the window instead
+
+    function el(tag, cls, html) {
+        const e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (html !== undefined) e.innerHTML = html;
+        return e;
+    }
+
+    // tiny inline icons (stroke = currentColor, so they follow the button colour)
+    function lineIcon(rows) {
+        return '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">' + rows.map(function (r, i) {
+            const y = 3 + i * 3.4;
+            return '<line x1="' + r[0] + '" y1="' + y + '" x2="' + r[1] + '" y2="' + y + '" stroke="currentColor" stroke-width="1.4"/>';
+        }).join('') + '</svg>';
+    }
+    const ICON = {
+        left: lineIcon([[2, 14], [2, 10], [2, 14], [2, 8]]),
+        center: lineIcon([[2, 14], [4, 12], [2, 14], [5, 11]]),
+        right: lineIcon([[2, 14], [6, 14], [2, 14], [8, 14]]),
+        justify: lineIcon([[2, 14], [2, 14], [2, 14], [2, 14]]),
+        bullets: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><g fill="currentColor"><circle cx="3" cy="4" r="1.4"/><circle cx="3" cy="8" r="1.4"/><circle cx="3" cy="12" r="1.4"/></g><g stroke="currentColor" stroke-width="1.4"><line x1="6.5" y1="4" x2="14" y2="4"/><line x1="6.5" y1="8" x2="14" y2="8"/><line x1="6.5" y1="12" x2="14" y2="12"/></g></svg>',
+        numbers: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><g fill="currentColor" font-size="5" font-family="Arial,sans-serif"><text x="1" y="5.6">1</text><text x="1" y="9.6">2</text><text x="1" y="13.6">3</text></g><g stroke="currentColor" stroke-width="1.4"><line x1="6.5" y1="4" x2="14" y2="4"/><line x1="6.5" y1="8" x2="14" y2="8"/><line x1="6.5" y1="12" x2="14" y2="12"/></g></svg>',
+        indent: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><g stroke="currentColor" stroke-width="1.4"><line x1="2" y1="3" x2="14" y2="3"/><line x1="8" y1="6.5" x2="14" y2="6.5"/><line x1="8" y1="10" x2="14" y2="10"/><line x1="2" y1="13.5" x2="14" y2="13.5"/></g><polygon points="2,5.5 6,8.2 2,10.9" fill="currentColor"/></svg>',
+        outdent: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><g stroke="currentColor" stroke-width="1.4"><line x1="2" y1="3" x2="14" y2="3"/><line x1="8" y1="6.5" x2="14" y2="6.5"/><line x1="8" y1="10" x2="14" y2="10"/><line x1="2" y1="13.5" x2="14" y2="13.5"/></g><polygon points="6,5.5 2,8.2 6,10.9" fill="currentColor"/></svg>',
+        spacing: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><g stroke="currentColor" stroke-width="1.4"><line x1="8" y1="3" x2="15" y2="3"/><line x1="8" y1="8" x2="15" y2="8"/><line x1="8" y1="13" x2="15" y2="13"/></g><g fill="currentColor"><polygon points="3.5,2 6,5 1,5"/><polygon points="3.5,14 6,11 1,11"/></g><line x1="3.5" y1="4.5" x2="3.5" y2="11.5" stroke="currentColor" stroke-width="1.2"/></svg>',
+        save: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2 2h9l3 3v9H2z" fill="#3b6ea5" stroke="#244a73" stroke-width=".8"/><rect x="4.5" y="2.4" width="6" height="3.6" fill="#fff"/><rect x="4" y="9" width="8" height="4.6" fill="#dbe7f5"/></svg>'
+    };
+
     function ensureStyles() {
         if (document.getElementById('wp-styles')) return;
-        const st = document.createElement('style');
-        st.id = 'wp-styles';
-        st.textContent = [
-            '.wp-root{display:flex;flex-direction:column;height:100%;background:#d4d0c8;font:12px Tahoma,"Segoe UI",sans-serif;color:#000;box-sizing:border-box;}',
-            '.wp-row{display:flex;flex-wrap:wrap;gap:3px;align-items:center;padding:3px 4px;border-bottom:1px solid #808080;}',
-            '.wp-btn{-webkit-appearance:none;appearance:none;background:#d4d0c8;color:#000;border:2px solid;border-color:#fff #404040 #404040 #fff;',
-            'padding:2px 6px;min-width:28px;height:28px;font:12px Tahoma,"Segoe UI",sans-serif;cursor:pointer;touch-action:manipulation;border-radius:0;}',
-            '.wp-btn.active{border-color:#404040 #fff #fff #404040;background:#bdb9ae;}',
-            '.wp-btn:active{border-color:#404040 #fff #fff #404040;}',
-            '.wp-sel,.wp-name{height:28px;font:12px Tahoma,"Segoe UI",sans-serif;background:#fff;color:#000;border:2px inset #808080;box-sizing:border-box;border-radius:0;}',
-            '.wp-name{flex:1;min-width:90px;padding:0 4px;}',
-            '.wp-color{width:30px;height:28px;padding:0;border:2px outset #fff;background:#d4d0c8;cursor:pointer;}',
-            '.wp-sep{width:1px;height:22px;background:#808080;margin:0 2px;}',
-            '.wp-page{flex:1;min-height:0;overflow:auto;background:#808080;padding:6px;}',
-            '.wp-editor{min-height:100%;box-sizing:border-box;background:#fff;color:#000;padding:14px 16px;outline:none;white-space:pre-wrap;word-wrap:break-word;',
-            'overflow-wrap:anywhere;font-family:Calibri,Carlito,Arial,sans-serif;font-size:' + DEFAULT_PT + 'pt;line-height:1.25;tab-size:4;-moz-tab-size:4;}',
+        const FONT = '"Segoe UI",system-ui,Roboto,"Helvetica Neue",Arial,sans-serif';
+        const css = [
+            '.wp-root{position:relative;display:flex;flex-direction:column;height:100%;background:#fff;font:12px ' + FONT + ';color:#1e1e1e;box-sizing:border-box;overflow:hidden;}',
+            '.wp-root *{box-sizing:border-box;}',
+            // tabs
+            '.wp-tabs{display:flex;align-items:flex-end;background:#fff;border-bottom:1px solid #dadbdc;padding-left:2px;flex:0 0 auto;overflow-x:auto;overflow-y:hidden;}',
+            '.wp-qat{display:flex;align-items:center;gap:1px;padding:0 8px 3px 4px;}',
+            '.wp-tab{-webkit-appearance:none;appearance:none;background:transparent;border:1px solid transparent;border-bottom:none;padding:5px 14px;font:inherit;color:#1e1e1e;cursor:pointer;border-radius:0;margin-bottom:-1px;white-space:nowrap;}',
+            '.wp-tab:hover{background:#e5f1fb;}',
+            '.wp-tab.file{background:#1979ca;color:#fff;border-color:#1979ca;padding:5px 20px;margin-right:2px;}',
+            '.wp-tab.file:hover,.wp-tab.file.open{background:#2b88d8;}',
+            '.wp-tab.on{background:#f5f6f7;border-color:#dadbdc;border-bottom:1px solid #f5f6f7;}',
+            // ribbon
+            '.wp-ribbon{display:flex;align-items:stretch;background:#f5f6f7;border-bottom:1px solid #dadbdc;overflow-x:auto;overflow-y:hidden;flex:0 0 auto;min-height:90px;}',
+            '.wp-ribbon[hidden]{display:none;}',
+            '.wp-group{display:flex;flex-direction:column;padding:3px 7px 0;border-right:1px solid #e1e2e3;flex:0 0 auto;}',
+            '.wp-gbody{display:flex;gap:4px;flex:1;align-items:flex-start;}',
+            '.wp-glabel{text-align:center;color:#555;font-size:11px;padding:2px 0 3px;white-space:nowrap;}',
+            '.wp-col{display:flex;flex-direction:column;gap:3px;}',
+            '.wp-line{display:flex;align-items:center;gap:1px;}',
+            '.wp-sep{width:1px;align-self:stretch;margin:2px 3px;background:#d4d5d6;}',
+            // buttons
+            '.wp-btn{-webkit-appearance:none;appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:5px;background:transparent;color:#1e1e1e;border:1px solid transparent;padding:0 5px;min-width:26px;height:26px;font:inherit;cursor:pointer;border-radius:0;touch-action:manipulation;white-space:nowrap;}',
+            '.wp-btn:hover{background:#e5f1fb;border-color:#cce4f7;}',
+            '.wp-btn:active,.wp-btn.on{background:#cce4f7;border-color:#99c9ef;}',
+            '.wp-btn.big{flex-direction:column;height:62px;min-width:50px;padding:3px 5px;gap:2px;}',
+            '.wp-btn.big .wp-bico{font-size:26px;line-height:30px;}',
+            '.wp-btn.row{justify-content:flex-start;width:100%;min-width:104px;}',
+            '.wp-btn.small{height:24px;min-width:24px;}',
+            '.wp-btn svg{display:block;}',
+            '.wp-split{display:inline-flex;align-items:stretch;}',
+            '.wp-split .wp-btn.arrow{min-width:13px;width:13px;padding:0;font-size:8px;}',
+            '.wp-icol{display:flex;flex-direction:column;align-items:center;line-height:1;}',
+            '.wp-aico{font-weight:600;font-size:14px;font-family:' + FONT + ';}',
+            '.wp-cbar{display:block;height:3px;width:15px;margin-top:2px;}',
+            '.wp-sel{height:24px;font:12px ' + FONT + ';background:#fff;color:#1e1e1e;border:1px solid #abadb3;border-radius:0;padding:0 2px;}',
+            // document area
+            '.wp-main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;}',
+            '.wp-pagearea{flex:1;min-height:0;overflow:auto;background:linear-gradient(#c3cfe1,#dce6f4);padding:0 8px 24px;}',
+            '.wp-sheetwrap{margin:0 auto;width:' + SHEET_PX + 'px;}',
+            '.wp-ruler{position:sticky;top:0;z-index:5;height:20px;background:#f7f7f7;border-bottom:1px solid #c9c9c9;overflow:hidden;margin-bottom:6px;font-size:10px;color:#333;user-select:none;-webkit-user-select:none;}',
+            '.wp-ruler i{position:absolute;bottom:0;width:1px;background:#6a6a6a;}',
+            '.wp-ruler b{position:absolute;top:2px;font-weight:normal;transform:translateX(-50%);}',
+            '.wp-editor{min-height:1123px;background:#fff;color:#000;padding:26px ' + SHEET_MARGIN_PX + 'px 60px;outline:none;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;box-shadow:0 0 6px rgba(0,0,0,.35);',
+            'font-family:Calibri,Carlito,Arial,sans-serif;font-size:' + DEFAULT_PT + 'pt;line-height:' + LH_BASE + ';tab-size:4;-moz-tab-size:4;}',
+            '.wp-narrow .wp-sheetwrap{width:auto;}',
+            '.wp-narrow .wp-editor{padding:14px 16px 40px;min-height:420px;}',
+            '.wp-narrow .wp-ruler{display:none;}',
+            '.wp-noruler .wp-ruler{display:none;}',
             '.wp-editor ul,.wp-editor ol{margin:0;padding-left:34px;}',
             '.wp-editor blockquote{margin:0 0 0 40px;border:none;padding:0;}',
-            '.wp-status{display:flex;justify-content:space-between;gap:8px;padding:2px 6px;border-top:1px solid #fff;font-size:11px;color:#202020;}'
+            // status bar
+            '.wp-status{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 8px;background:#f0f0f0;border-top:1px solid #d9d9d9;font-size:11px;color:#333;flex:0 0 auto;min-height:24px;}',
+            '.wp-status[hidden]{display:none;}',
+            '.wp-zoom{display:flex;align-items:center;gap:4px;}',
+            '.wp-zoom input[type=range]{width:110px;}',
+            '.wp-zoomlbl{min-width:38px;text-align:right;}',
+            // popups
+            '.wp-pop{position:absolute;z-index:30;background:#fff;border:1px solid #c6c6c6;box-shadow:2px 3px 8px rgba(0,0,0,.28);padding:2px;min-width:150px;max-width:94%;}',
+            '.wp-mi{-webkit-appearance:none;appearance:none;display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:transparent;color:#1e1e1e;border:1px solid transparent;padding:5px 12px 5px 8px;font:inherit;cursor:pointer;border-radius:0;white-space:nowrap;}',
+            '.wp-mi:hover{background:#e5f1fb;border-color:#cce4f7;}',
+            '.wp-mi .wp-mk{width:16px;display:inline-flex;justify-content:center;}',
+            '.wp-mhr{height:1px;background:#e1e2e3;margin:3px 2px;}',
+            '.wp-pal{display:grid;grid-template-columns:repeat(10,18px);gap:3px;padding:6px;}',
+            '.wp-sw{-webkit-appearance:none;appearance:none;width:18px;height:18px;padding:0;border:1px solid #8a8a8a;border-radius:0;cursor:pointer;}',
+            '.wp-sw:hover{outline:2px solid #3c8ee0;outline-offset:0;}',
+            '.wp-native{position:absolute;opacity:0;width:1px;height:1px;border:0;padding:0;pointer-events:none;}',
+            // modal + find panel
+            '.wp-ov{position:absolute;inset:0;z-index:40;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;padding:8px;}',
+            '.wp-modal{background:#fff;border:1px solid #1979ca;box-shadow:0 6px 22px rgba(0,0,0,.4);min-width:270px;max-width:100%;}',
+            '.wp-mtitle{padding:7px 12px;font-weight:600;color:#1979ca;border-bottom:1px solid #e1e1e1;}',
+            '.wp-mbody{padding:12px;display:flex;flex-direction:column;gap:8px;}',
+            '.wp-mbody label{display:flex;flex-direction:column;gap:3px;}',
+            '.wp-mfoot{display:flex;justify-content:flex-end;gap:6px;padding:0 12px 12px;}',
+            '.wp-pbtn{-webkit-appearance:none;appearance:none;min-width:78px;height:26px;padding:0 10px;font:inherit;background:#e1e1e1;color:#000;border:1px solid #adadad;border-radius:0;cursor:pointer;}',
+            '.wp-pbtn:hover{background:#e5f1fb;border-color:#0078d7;}',
+            '.wp-pbtn.def{border-color:#0078d7;}',
+            '.wp-in{height:26px;font:12px ' + FONT + ';background:#fff;color:#000;border:1px solid #7a7a7a;border-radius:0;padding:0 5px;width:100%;}',
+            '.wp-find{position:absolute;right:20px;top:8px;z-index:20;width:310px;max-width:calc(100% - 30px);background:#f5f6f7;border:1px solid #adb0b3;box-shadow:2px 3px 10px rgba(0,0,0,.3);padding:8px 10px;display:flex;flex-direction:column;gap:6px;}',
+            '.wp-find[hidden]{display:none;}',
+            '.wp-find .hd{display:flex;justify-content:space-between;align-items:center;font-weight:600;}',
+            '.wp-find .rw{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}',
+            '.wp-find .chk{display:flex;align-items:center;gap:4px;}',
+            '.wp-find .msg{min-height:14px;color:#a31515;font-size:11px;}'
         ].join('\n');
+        const st = document.createElement('style');
+        st.id = 'wp-styles';
+        st.textContent = css;
         document.head.appendChild(st);
     }
 
     window.initWordpad = function (container, winId) {
         ensureStyles();
 
-        const root = document.createElement('div');
-        root.className = 'wp-root';
-        root.innerHTML =
-            '<div class="wp-row wp-file-row"></div>' +
-            '<div class="wp-row wp-fmt-row"></div>' +
-            '<div class="wp-row wp-fmt-row2"></div>' +
-            '<div class="wp-page"><div class="wp-editor" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true"></div></div>' +
-            '<div class="wp-status"><span class="wp-counts"></span><span class="wp-note"></span></div>';
+        const root = el('div', 'wp-root');
         container.appendChild(root);
 
-        const fileRow = root.querySelector('.wp-file-row');
-        const fmtRow = root.querySelector('.wp-fmt-row');
-        const fmtRow2 = root.querySelector('.wp-fmt-row2');
-        const editor = root.querySelector('.wp-editor');
-        const countsEl = root.querySelector('.wp-counts');
-        const noteEl = root.querySelector('.wp-note');
+        // ---------- structure ----------
+        const tabsBar = el('div', 'wp-tabs');
+        const qat = el('div', 'wp-qat');
+        const fileTab = el('button', 'wp-tab file', 'File');
+        const homeTab = el('button', 'wp-tab on', 'Home');
+        const viewTab = el('button', 'wp-tab', 'Visualizza');
+        [fileTab, homeTab, viewTab].forEach(function (b) { b.type = 'button'; });
+        tabsBar.appendChild(qat); tabsBar.appendChild(fileTab); tabsBar.appendChild(homeTab); tabsBar.appendChild(viewTab);
+
+        const homeRibbon = el('div', 'wp-ribbon');
+        const viewRibbon = el('div', 'wp-ribbon');
+        viewRibbon.hidden = true;
+
+        const main = el('div', 'wp-main');
+        const pageArea = el('div', 'wp-pagearea');
+        const sheetWrap = el('div', 'wp-sheetwrap');
+        const ruler = el('div', 'wp-ruler');
+        const editor = el('div', 'wp-editor');
+        editor.setAttribute('contenteditable', 'true');
+        editor.spellcheck = true;
+        editor.setAttribute('role', 'textbox');
+        editor.setAttribute('aria-multiline', 'true');
+        editor.setAttribute('aria-label', 'Documento');
+        sheetWrap.appendChild(ruler); sheetWrap.appendChild(editor);
+        pageArea.appendChild(sheetWrap);
+        main.appendChild(pageArea);
+
+        const status = el('div', 'wp-status');
+        const countsEl = el('span', 'wp-counts');
+        const noteEl = el('span', 'wp-note');
+        const zoomBox = el('div', 'wp-zoom');
+        status.appendChild(countsEl); status.appendChild(noteEl); status.appendChild(zoomBox);
+
+        root.appendChild(tabsBar); root.appendChild(homeRibbon); root.appendChild(viewRibbon);
+        root.appendChild(main); root.appendChild(status);
+
+        // ruler marks: origin 0 sits at the left text margin, numbers count away from it
+        (function buildRuler() {
+            for (let half = -6; half <= 35; half++) {
+                const cm = half / 2;
+                const x = SHEET_MARGIN_PX + cm * RULER_CM_PX;
+                if (x < 0 || x > SHEET_PX) continue;
+                const tick = el('i');
+                const whole = (half % 2 === 0);
+                tick.style.left = x + 'px';
+                tick.style.height = whole ? '7px' : '4px';
+                ruler.appendChild(tick);
+                if (whole && cm !== 0) { const n = el('b', '', String(Math.abs(cm))); n.style.left = x + 'px'; ruler.appendChild(n); }
+            }
+        })();
 
         // ---------- selection handling ----------
-        // Toolbar <select>/<input type=color> steal focus (and on phones even
-        // plain buttons can), so the last selection inside the editor is
-        // remembered and put back before every command is run.
+        // Anything outside the editor (selects, colour pickers, the find box,
+        // even plain buttons on some phones) can steal focus/selection, so the
+        // last selection inside the editor is remembered and restored before
+        // every command.
         let savedRange = null;
         function saveSelection() {
             const sel = window.getSelection();
@@ -712,7 +885,7 @@
             editor.focus();
             const sel = window.getSelection();
             if (!sel) return;
-            if (savedRange && editor.contains(savedRange.startContainer)) {
+            if (savedRange && editor.contains(savedRange.startContainer) && editor.contains(savedRange.endContainer)) {
                 sel.removeAllRanges();
                 sel.addRange(savedRange);
             } else {
@@ -724,25 +897,105 @@
             }
         }
 
-        // ---------- toolbar construction ----------
-        const toggles = []; // {cmd, btn}
-        function mkBtn(parent, label, title, onClick, stateCmd) {
-            const b = document.createElement('button');
+        // ---------- popups (menus, palettes) ----------
+        let openPop = null;
+        function closePop() {
+            if (openPop) { openPop.remove(); fileTab.classList.remove('open'); openPop = null; }
+        }
+        function showPop(anchor, build) {
+            const same = openPop && openPop._anchor === anchor;
+            closePop();
+            if (same) return; // a second click on the same button closes it
+            const pop = el('div', 'wp-pop');
+            build(pop);
+            root.appendChild(pop);
+            const r = anchor.getBoundingClientRect();
+            const rr = root.getBoundingClientRect();
+            let left = r.left - rr.left;
+            const maxLeft = rr.width - pop.offsetWidth - 4;
+            if (left > maxLeft) left = Math.max(2, maxLeft);
+            pop.style.left = left + 'px';
+            pop.style.top = (r.bottom - rr.top + 1) + 'px';
+            pop._anchor = anchor;
+            openPop = pop;
+        }
+        function menuItem(pop, label, onClick, mark) {
+            const b = el('button', 'wp-mi');
             b.type = 'button';
-            b.className = 'wp-btn';
-            b.innerHTML = label;
-            b.title = title;
-            b.setAttribute('aria-label', title);
-            // keep the editor's focus/selection when a button is pressed
+            const mk = el('span', 'wp-mk'); mk.textContent = mark || '';
+            b.appendChild(mk);
+            b.appendChild(document.createTextNode(label));
             b.addEventListener('mousedown', function (e) { e.preventDefault(); });
-            b.addEventListener('click', onClick);
-            parent.appendChild(b);
-            if (stateCmd) toggles.push({ cmd: stateCmd, btn: b });
+            b.addEventListener('click', function () { closePop(); onClick(); });
+            pop.appendChild(b);
             return b;
         }
-        function sep(parent) { const s = document.createElement('span'); s.className = 'wp-sep'; parent.appendChild(s); }
+        function onDocPointerDown(e) {
+            if (!openPop) return;
+            if (openPop.contains(e.target) || (openPop._anchor && openPop._anchor.contains(e.target))) return;
+            closePop();
+        }
+        document.addEventListener('pointerdown', onDocPointerDown, true);
 
+        // ---------- modal dialog (inside the window) ----------
+        function showModal(title, buildBody, buttons) {
+            const ov = el('div', 'wp-ov');
+            const box = el('div', 'wp-modal');
+            const t = el('div', 'wp-mtitle'); t.textContent = title;
+            const body = el('div', 'wp-mbody');
+            const foot = el('div', 'wp-mfoot');
+            box.appendChild(t); box.appendChild(body); box.appendChild(foot);
+            ov.appendChild(box);
+            root.appendChild(ov);
+            function close() { ov.remove(); }
+            buildBody(body);
+            buttons.forEach(function (bt) {
+                const b = el('button', 'wp-pbtn' + (bt.def ? ' def' : ''));
+                b.type = 'button';
+                b.textContent = bt.label;
+                b.addEventListener('click', function () { if (bt.action) { if (bt.action() === false) return; } close(); });
+                foot.appendChild(b);
+            });
+            ov.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') close();
+                else if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') {
+                    const d = buttons.find(function (b) { return b.def; });
+                    if (d) { e.preventDefault(); if (!d.action || d.action() !== false) close(); }
+                }
+            });
+            const first = body.querySelector('input,select');
+            if (first) first.focus();
+            return close;
+        }
+
+        // ---------- ribbon building blocks ----------
+        const toggles = []; // {cmd, btn}
+        function mkBtn(parent, html, title, onClick, opts) {
+            opts = opts || {};
+            const b = el('button', 'wp-btn' + (opts.cls ? ' ' + opts.cls : ''), html);
+            b.type = 'button';
+            b.title = title;
+            b.setAttribute('aria-label', title);
+            // keep the editor's focus and selection when a ribbon button is pressed
+            b.addEventListener('mousedown', function (e) { e.preventDefault(); });
+            b.addEventListener('click', function (e) { onClick(e, b); });
+            parent.appendChild(b);
+            if (opts.cmd) toggles.push({ cmd: opts.cmd, btn: b });
+            return b;
+        }
+        function group(parent, label) {
+            const g = el('div', 'wp-group');
+            const body = el('div', 'wp-gbody');
+            const lab = el('div', 'wp-glabel'); lab.textContent = label;
+            g.appendChild(body); g.appendChild(lab);
+            parent.appendChild(g);
+            return body;
+        }
+        function sep(parent) { parent.appendChild(el('span', 'wp-sep')); }
+
+        // ---------- editing commands ----------
         function exec(cmd, val) {
+            closePop();
             restoreSelection();
             try { document.execCommand('styleWithCSS', false, true); } catch (e) { /* ignore */ }
             document.execCommand(cmd, false, val === undefined ? null : val);
@@ -750,8 +1003,8 @@
             afterEdit();
         }
 
-        // font size: execCommand only knows sizes 1-7, so ask for size 7 and
-        // swap the resulting <font size=7> for a span with the exact point size
+        // execCommand only knows font sizes 1-7: ask for 7 and swap the result
+        // for a span with the exact point size
         let pendingPt = 0;
         function convertSizeMarkers() {
             if (!pendingPt) return;
@@ -763,6 +1016,7 @@
             });
         }
         function applySize(pt) {
+            closePop();
             restoreSelection();
             pendingPt = pt;
             try { document.execCommand('styleWithCSS', false, false); } catch (e) { /* ignore */ }
@@ -773,47 +1027,189 @@
             afterEdit();
         }
 
-        // --- file row ---
-        const fileInput = document.createElement('input');
-        fileInput.type = 'file';
-        fileInput.accept = '.rtf,.txt,text/plain,application/rtf,text/rtf';
-        fileInput.style.display = 'none';
-        root.appendChild(fileInput);
+        function insertPlainText(text) {
+            if (!text) return;
+            text.replace(/\r\n?/g, '\n').split('\n').forEach(function (line, idx) {
+                if (idx > 0) document.execCommand('insertParagraph');
+                if (line) document.execCommand('insertText', false, line);
+            });
+            afterEdit();
+        }
+        function doCopy(cut) {
+            closePop();
+            restoreSelection();
+            const text = String(window.getSelection());
+            if (!text) return;
+            let done = false;
+            try { done = document.execCommand(cut ? 'cut' : 'copy'); } catch (e) { done = false; }
+            if (!done && navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(function () {
+                    if (cut) { restoreSelection(); document.execCommand('delete'); afterEdit(); }
+                }, function () { noteEl.textContent = 'Il browser non consente di copiare da qui'; });
+            } else if (done && cut) afterEdit();
+        }
+        function doPaste() {
+            closePop();
+            if (navigator.clipboard && navigator.clipboard.readText) {
+                navigator.clipboard.readText().then(function (t) { restoreSelection(); insertPlainText(t); },
+                    function () { noteEl.textContent = 'Il browser non consente di incollare dal pulsante: usa Ctrl+V'; });
+            } else noteEl.textContent = 'Il browser non consente di incollare dal pulsante: usa Ctrl+V';
+        }
 
-        const nameInput = document.createElement('input');
-        nameInput.type = 'text';
-        nameInput.className = 'wp-name';
-        nameInput.value = 'Documento';
-        nameInput.setAttribute('aria-label', 'Nome del file');
-        nameInput.title = 'Nome del file da salvare';
+        // ---------- line spacing ----------
+        function wrapRootInline() {
+            const sel = window.getSelection();
+            let keep = null;
+            if (sel.rangeCount && editor.contains(sel.anchorNode)) {
+                const r = sel.getRangeAt(0);
+                keep = { sc: r.startContainer, so: r.startOffset, ec: r.endContainer, eo: r.endOffset };
+            }
+            let grp = [];
+            function flush() {
+                if (grp.some(function (n) { return n.nodeType !== 3 || n.nodeValue.trim() !== ''; })) {
+                    const d = document.createElement('div');
+                    editor.insertBefore(d, grp[0]);
+                    grp.forEach(function (n) { d.appendChild(n); });
+                }
+                grp = [];
+            }
+            Array.prototype.slice.call(editor.childNodes).forEach(function (n) {
+                if (n.nodeType === 1 && BLOCK_TAGS.has(n.tagName)) flush(); else grp.push(n);
+            });
+            flush();
+            if (keep) {
+                try {
+                    const r = document.createRange();
+                    r.setStart(keep.sc, keep.so);
+                    r.setEnd(keep.ec, keep.eo);
+                    sel.removeAllRanges();
+                    sel.addRange(r);
+                } catch (e) { /* offsets no longer valid: leave the caret where it is */ }
+            }
+        }
+        function isTextBlock(b) {
+            return Array.prototype.some.call(b.childNodes, function (c) {
+                return (c.nodeType === 3 && c.nodeValue !== '') || (c.nodeType === 1 && !BLOCK_TAGS.has(c.tagName));
+            });
+        }
+        function applyLineSpacing(mult) {
+            closePop();
+            restoreSelection();
+            wrapRootInline();
+            const sel = window.getSelection();
+            if (!sel.rangeCount) return;
+            const range = sel.getRangeAt(0);
+            const cands = Array.prototype.filter.call(editor.querySelectorAll('div,p,li,blockquote'), isTextBlock);
+            let targets;
+            if (range.collapsed) {
+                let n = range.startContainer;
+                while (n && n !== editor && !(n.nodeType === 1 && cands.indexOf(n) >= 0)) n = n.parentNode;
+                targets = (n && n !== editor) ? [n] : [];
+            } else {
+                targets = cands.filter(function (b) { return range.intersectsNode(b); });
+            }
+            targets.forEach(function (b) {
+                if (mult === 1) b.style.removeProperty('line-height');
+                else b.style.lineHeight = String(Math.round(mult * LH_BASE * 100) / 100);
+                if (!b.getAttribute('style')) b.removeAttribute('style');
+            });
+            saveSelection();
+            afterEdit();
+        }
+
+        // ---------- document state: name, title ----------
+        let docName = 'Documento';
+        let docExt = 'rtf';
+        let docNamed = false;
+        function setTitle() {
+            try {
+                const w = window.WindowManager && WindowManager.windows && WindowManager.windows[winId];
+                const t = w && w.querySelector('.window-title');
+                if (t) t.textContent = (docNamed ? docName + '.' + docExt : docName) + ' - WordPad';
+            } catch (e) { /* the title is cosmetic */ }
+        }
 
         function hasText() { return editor.innerText.replace(/\s/g, '') !== ''; }
         function sendToBin() {
             if (hasText() && window.sendToRecycleBin) window.sendToRecycleBin(editor.innerText.trim(), 'WordPad');
         }
-
         function newDoc() {
+            closePop();
             sendToBin();
             editor.textContent = '';
             savedRange = null;
-            nameInput.value = 'Documento';
+            docName = 'Documento'; docExt = 'rtf'; docNamed = false;
+            setTitle();
             afterEdit();
             editor.focus();
         }
-        function saveRtf() {
+        function downloadDoc(ext) {
             try {
-                const rtf = htmlToRtf(editor);
-                downloadBlob(new Blob([rtf], { type: 'application/rtf' }), safeFileName(nameInput.value) + '.rtf');
-                noteEl.textContent = 'Salvato come .rtf';
-            } catch (e) { showError('WordPad - Salvataggio', 'Non è stato possibile creare il file RTF: ' + e.message); }
+                if (ext === 'txt') {
+                    const text = editor.innerText.replace(/\u00a0/g, ' ').replace(/\r?\n/g, '\r\n');
+                    downloadBlob(new Blob(['\uFEFF' + text], { type: 'text/plain;charset=utf-8' }), docName + '.txt');
+                } else {
+                    downloadBlob(new Blob([htmlToRtf(editor)], { type: 'application/rtf' }), docName + '.rtf');
+                }
+                noteEl.textContent = 'Salvato come ' + docName + '.' + ext;
+            } catch (e) { showError('WordPad - Salvataggio', 'Non è stato possibile creare il file: ' + e.message); }
         }
-        function saveTxt() {
+        function saveAs() {
+            closePop();
+            let nameIn, typeSel;
+            showModal('Salva con nome', function (body) {
+                const l1 = el('label'); l1.appendChild(document.createTextNode('Nome del file:'));
+                nameIn = el('input', 'wp-in'); nameIn.type = 'text'; nameIn.value = docName; l1.appendChild(nameIn);
+                const l2 = el('label'); l2.appendChild(document.createTextNode('Salva come:'));
+                typeSel = el('select', 'wp-sel'); typeSel.style.height = '26px';
+                [['rtf', 'Documento RTF (*.rtf)'], ['txt', 'Documento di testo (*.txt)']].forEach(function (o) {
+                    const op = el('option'); op.value = o[0]; op.textContent = o[1]; typeSel.appendChild(op);
+                });
+                typeSel.value = docExt;
+                l2.appendChild(typeSel);
+                body.appendChild(l1); body.appendChild(l2);
+            }, [
+                { label: 'Salva', def: true, action: function () {
+                    docName = safeFileName(nameIn.value); docExt = typeSel.value; docNamed = true;
+                    setTitle(); downloadDoc(docExt);
+                } },
+                { label: 'Annulla' }
+            ]);
+        }
+        function saveDoc() {
+            closePop();
+            if (!docNamed) { saveAs(); return; }
+            downloadDoc(docExt);
+        }
+        function printDoc() {
+            closePop();
             try {
-                const text = editor.innerText.replace(/\u00a0/g, ' ').replace(/\r?\n/g, '\r\n');
-                downloadBlob(new Blob(['\uFEFF' + text], { type: 'text/plain;charset=utf-8' }), safeFileName(nameInput.value) + '.txt');
-                noteEl.textContent = 'Salvato come .txt';
-            } catch (e) { showError('WordPad - Salvataggio', 'Non è stato possibile creare il file di testo: ' + e.message); }
+                const frame = document.createElement('iframe');
+                frame.setAttribute('aria-hidden', 'true');
+                frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
+                document.body.appendChild(frame);
+                const d = frame.contentDocument;
+                d.open();
+                d.write('<!doctype html><html><head><meta charset="utf-8"><title>' + String(docName).replace(/[<>&]/g, '') + '</title>' +
+                    '<style>@page{margin:2.5cm}body{margin:0;font-family:Calibri,Carlito,Arial,sans-serif;font-size:' + DEFAULT_PT + 'pt;line-height:' + LH_BASE + ';white-space:pre-wrap}' +
+                    'ul,ol{margin:0;padding-left:34px}blockquote{margin:0 0 0 40px}</style></head><body></body></html>');
+                d.close();
+                const parsed = new DOMParser().parseFromString(editor.innerHTML, 'text/html');
+                Array.prototype.forEach.call(parsed.body.childNodes, function (c) { cloneClean(c, d.body); });
+                setTimeout(function () {
+                    try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+                    catch (e) { showError('WordPad - Stampa', 'La stampa non è disponibile in questo browser.'); }
+                    setTimeout(function () { frame.remove(); }, 3000);
+                }, 150);
+            } catch (e) { showError('WordPad - Stampa', 'Non è stato possibile preparare la stampa.'); }
         }
+
+        const fileInput = el('input');
+        fileInput.type = 'file';
+        fileInput.accept = '.rtf,.txt,text/plain,application/rtf,text/rtf';
+        fileInput.style.display = 'none';
+        root.appendChild(fileInput);
+
         function openFile(file) {
             if (!file) return;
             if (file.size > MAX_OPEN_BYTES) { showError('WordPad - Apri', 'Il file è troppo grande (massimo 5 MB).'); return; }
@@ -823,8 +1219,9 @@
                 let text;
                 try { text = decodeText(reader.result); } catch (e) { showError('WordPad - Apri', 'Codifica del file non riconosciuta.'); return; }
                 let frag;
+                const isRtf = /\.rtf$/i.test(file.name) || /^\s*\{\\rtf/.test(text);
                 try {
-                    if (/\.rtf$/i.test(file.name) || /^\s*\{\\rtf/.test(text)) {
+                    if (isRtf) {
                         frag = rtfToDom(text, document);
                     } else {
                         frag = document.createDocumentFragment();
@@ -839,7 +1236,8 @@
                 editor.textContent = '';
                 editor.appendChild(frag);
                 savedRange = null;
-                nameInput.value = safeFileName(file.name);
+                docName = safeFileName(file.name); docExt = isRtf ? 'rtf' : 'txt'; docNamed = true;
+                setTitle();
                 afterEdit();
                 noteEl.textContent = 'Aperto: ' + file.name;
             };
@@ -851,80 +1249,409 @@
             openFile(f);
         });
 
-        mkBtn(fileRow, '📄 Nuovo', 'Nuovo documento (il testo attuale va nel Cestino)', newDoc);
-        mkBtn(fileRow, '📂 Apri…', 'Apri un file .rtf o .txt', function () { fileInput.click(); });
-        mkBtn(fileRow, '💾 Salva .rtf', 'Scarica il documento come file RTF (Ctrl+S)', saveRtf);
-        mkBtn(fileRow, 'Salva .txt', 'Scarica il documento come testo semplice', saveTxt);
-        fileRow.appendChild(nameInput);
+        // ---------- File menu ----------
+        fileTab.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        fileTab.addEventListener('click', function () {
+            showPop(fileTab, function (pop) {
+                menuItem(pop, 'Nuovo', newDoc);
+                menuItem(pop, 'Apri…', function () { fileInput.click(); });
+                menuItem(pop, 'Salva', saveDoc);
+                menuItem(pop, 'Salva con nome…', saveAs);
+                pop.appendChild(el('div', 'wp-mhr'));
+                menuItem(pop, 'Stampa', printDoc);
+                pop.appendChild(el('div', 'wp-mhr'));
+                menuItem(pop, 'Esci', function () {
+                    if (window.WindowManager && WindowManager.closeWindow) WindowManager.closeWindow(winId);
+                });
+            });
+            fileTab.classList.toggle('open', !!openPop);
+        });
+        homeTab.addEventListener('click', function () { closePop(); homeTab.classList.add('on'); viewTab.classList.remove('on'); homeRibbon.hidden = false; viewRibbon.hidden = true; });
+        viewTab.addEventListener('click', function () { closePop(); viewTab.classList.add('on'); homeTab.classList.remove('on'); viewRibbon.hidden = false; homeRibbon.hidden = true; });
 
-        // --- format row 1: font, size, character styles, colours ---
-        const fontSel = document.createElement('select');
-        fontSel.className = 'wp-sel';
-        fontSel.title = 'Carattere';
-        FONT_LIST.forEach(function (f) { const o = document.createElement('option'); o.value = f; o.textContent = f; fontSel.appendChild(o); });
+        // quick access: save / undo / redo
+        mkBtn(qat, ICON.save, 'Salva (Ctrl+S)', saveDoc, { cls: 'small' });
+        mkBtn(qat, '↶', 'Annulla (Ctrl+Z)', function () { exec('undo'); }, { cls: 'small' });
+        mkBtn(qat, '↷', 'Ripeti (Ctrl+Y)', function () { exec('redo'); }, { cls: 'small' });
+
+        // ---------- HOME: Appunti ----------
+        const gClip = group(homeRibbon, 'Appunti');
+        mkBtn(gClip, '<span class="wp-bico">📋</span><span>Incolla</span>', 'Incolla (Ctrl+V)', doPaste, { cls: 'big' });
+        const clipCol = el('div', 'wp-col'); gClip.appendChild(clipCol);
+        mkBtn(clipCol, '<span>✂</span><span>Taglia</span>', 'Taglia (Ctrl+X)', function () { doCopy(true); }, { cls: 'row' });
+        mkBtn(clipCol, '<span>⧉</span><span>Copia</span>', 'Copia (Ctrl+C)', function () { doCopy(false); }, { cls: 'row' });
+
+        // ---------- HOME: Carattere ----------
+        const gFont = group(homeRibbon, 'Carattere');
+        const fontCol = el('div', 'wp-col'); gFont.appendChild(fontCol);
+        const fontLine1 = el('div', 'wp-line'); const fontLine2 = el('div', 'wp-line');
+        fontCol.appendChild(fontLine1); fontCol.appendChild(fontLine2);
+
+        const fontSel = el('select', 'wp-sel');
+        fontSel.title = 'Tipo di carattere'; fontSel.setAttribute('aria-label', 'Tipo di carattere'); fontSel.style.width = '118px';
+        FONT_LIST.forEach(function (f) { const o = el('option'); o.value = f; o.textContent = f; fontSel.appendChild(o); });
         fontSel.addEventListener('change', function () { exec('fontName', fontSel.value); });
-        fmtRow.appendChild(fontSel);
+        fontLine1.appendChild(fontSel);
 
-        const sizeSel = document.createElement('select');
-        sizeSel.className = 'wp-sel';
-        sizeSel.title = 'Dimensione';
-        SIZE_LIST.forEach(function (s) { const o = document.createElement('option'); o.value = String(s); o.textContent = String(s); sizeSel.appendChild(o); });
+        const sizeSel = el('select', 'wp-sel');
+        sizeSel.title = 'Dimensione carattere'; sizeSel.setAttribute('aria-label', 'Dimensione carattere'); sizeSel.style.width = '48px'; sizeSel.style.marginLeft = '3px';
+        SIZE_LIST.forEach(function (s) { const o = el('option'); o.value = String(s); o.textContent = String(s); sizeSel.appendChild(o); });
         sizeSel.value = String(DEFAULT_PT);
         sizeSel.addEventListener('change', function () { applySize(parseInt(sizeSel.value, 10)); });
-        fmtRow.appendChild(sizeSel);
-        sep(fmtRow);
+        fontLine1.appendChild(sizeSel);
 
-        mkBtn(fmtRow, '<b>G</b>', 'Grassetto (Ctrl+B)', function () { exec('bold'); }, 'bold');
-        mkBtn(fmtRow, '<i>C</i>', 'Corsivo (Ctrl+I)', function () { exec('italic'); }, 'italic');
-        mkBtn(fmtRow, '<u>S</u>', 'Sottolineato (Ctrl+U)', function () { exec('underline'); }, 'underline');
-        mkBtn(fmtRow, '<s>B</s>', 'Barrato', function () { exec('strikeThrough'); }, 'strikeThrough');
-        mkBtn(fmtRow, 'x<sub>2</sub>', 'Pedice', function () { exec('subscript'); }, 'subscript');
-        mkBtn(fmtRow, 'x<sup>2</sup>', 'Apice', function () { exec('superscript'); }, 'superscript');
-        sep(fmtRow);
-
-        function mkColor(parent, title, initial, apply) {
-            const wrapLabel = document.createElement('label');
-            wrapLabel.title = title;
-            wrapLabel.style.display = 'inline-flex';
-            wrapLabel.style.alignItems = 'center';
-            wrapLabel.style.gap = '2px';
-            const txt = document.createElement('span');
-            txt.textContent = title.charAt(0) === 'C' ? 'A' : '▮';
-            txt.style.fontWeight = 'bold';
-            const inp = document.createElement('input');
-            inp.type = 'color';
-            inp.className = 'wp-color';
-            inp.value = initial;
-            inp.setAttribute('aria-label', title);
-            inp.addEventListener('change', function () { apply(inp.value); }); // 'change', not 'input': one span per pick, not hundreds
-            wrapLabel.appendChild(txt);
-            wrapLabel.appendChild(inp);
-            parent.appendChild(wrapLabel);
+        function stepSize(dir) {
+            const cur = parseInt(sizeSel.value, 10);
+            const idx = SIZE_LIST.indexOf(cur);
+            let next = cur;
+            if (idx >= 0) next = SIZE_LIST[Math.min(SIZE_LIST.length - 1, Math.max(0, idx + dir))];
+            else if (dir > 0) next = SIZE_LIST.find(function (s) { return s > cur; }) || cur;
+            else next = SIZE_LIST.slice().reverse().find(function (s) { return s < cur; }) || cur;
+            sizeSel.value = String(next);
+            applySize(next);
         }
-        mkColor(fmtRow, 'Colore testo', '#000000', function (v) { exec('foreColor', v); });
-        mkColor(fmtRow, 'Evidenziatore', '#ffff00', function (v) {
-            restoreSelection();
-            try { document.execCommand('styleWithCSS', false, true); } catch (e) { /* ignore */ }
-            if (!document.execCommand('hiliteColor', false, v)) document.execCommand('backColor', false, v);
-            saveSelection();
-            afterEdit();
+        mkBtn(fontLine1, '<span style="font-size:14px">A</span><span style="font-size:8px">▲</span>', 'Ingrandisci carattere', function () { stepSize(1); }, { cls: 'small' });
+        mkBtn(fontLine1, '<span style="font-size:10px">A</span><span style="font-size:8px">▼</span>', 'Riduci carattere', function () { stepSize(-1); }, { cls: 'small' });
+
+        mkBtn(fontLine2, '<b>G</b>', 'Grassetto (Ctrl+B)', function () { exec('bold'); }, { cls: 'small', cmd: 'bold' });
+        mkBtn(fontLine2, '<i>C</i>', 'Corsivo (Ctrl+I)', function () { exec('italic'); }, { cls: 'small', cmd: 'italic' });
+        mkBtn(fontLine2, '<u>S</u>', 'Sottolineato (Ctrl+U)', function () { exec('underline'); }, { cls: 'small', cmd: 'underline' });
+        mkBtn(fontLine2, '<s>abc</s>', 'Barrato', function () { exec('strikeThrough'); }, { cls: 'small', cmd: 'strikeThrough' });
+        mkBtn(fontLine2, 'x<sub>2</sub>', 'Pedice', function () { exec('subscript'); }, { cls: 'small', cmd: 'subscript' });
+        mkBtn(fontLine2, 'x<sup>2</sup>', 'Apice', function () { exec('superscript'); }, { cls: 'small', cmd: 'superscript' });
+        fontLine2.appendChild(el('span', 'wp-sep'));
+
+        // split colour buttons: the main part applies the CURRENT colour straight away
+        // (like the real WordPad), the arrow opens the palette to change it
+        function mkColorSplit(parent, o) {
+            const wrap = el('span', 'wp-split');
+            const native = el('input', 'wp-native');
+            native.type = 'color';
+            native.value = o.initial;
+            native.tabIndex = -1;
+            native.setAttribute('aria-label', o.title);
+            let current = o.initial;
+            const bar = el('span', 'wp-cbar');
+            bar.style.background = current;
+            const mainBtn = mkBtn(wrap, '', o.title, function () { o.apply(current); }, { cls: 'small' });
+            const ico = el('span', 'wp-icol');
+            ico.innerHTML = o.glyph;
+            ico.appendChild(bar);
+            mainBtn.appendChild(ico);
+            function setCurrent(c) { current = c; bar.style.background = c; }
+            const arrow = mkBtn(wrap, '▾', o.title + ' - scegli colore', function (e, b) {
+                showPop(b, function (pop) {
+                    const pal = el('div', 'wp-pal');
+                    PALETTE.forEach(function (c) {
+                        const sw = el('button', 'wp-sw');
+                        sw.type = 'button'; sw.title = c; sw.setAttribute('aria-label', c);
+                        sw.style.background = c;
+                        sw.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
+                        sw.addEventListener('click', function () { closePop(); setCurrent(c); o.apply(c); });
+                        pal.appendChild(sw);
+                    });
+                    pop.appendChild(pal);
+                    pop.appendChild(el('div', 'wp-mhr'));
+                    if (o.noneLabel) menuItem(pop, o.noneLabel, function () { o.apply(o.noneValue); });
+                    menuItem(pop, 'Altri colori…', function () { native.click(); });
+                });
+            }, { cls: 'arrow small' });
+            native.addEventListener('change', function () { setCurrent(native.value); o.apply(native.value); });
+            wrap.appendChild(native);
+            parent.appendChild(wrap);
+            return arrow;
+        }
+        mkColorSplit(fontLine2, {
+            title: 'Colore del carattere', glyph: '<span class="wp-aico">A</span>', initial: '#000000',
+            apply: function (c) { exec('foreColor', c); },
+            noneLabel: 'Automatico', noneValue: '#000000'
+        });
+        mkColorSplit(fontLine2, {
+            title: 'Colore di evidenziazione del testo', glyph: '<span class="wp-aico" style="font-size:13px">✎</span>', initial: '#fff200',
+            apply: function (c) {
+                closePop();
+                restoreSelection();
+                try { document.execCommand('styleWithCSS', false, true); } catch (e) { /* ignore */ }
+                if (!document.execCommand('hiliteColor', false, c)) document.execCommand('backColor', false, c);
+                saveSelection();
+                afterEdit();
+            },
+            noneLabel: 'Nessun colore', noneValue: 'transparent'
         });
 
-        // --- format row 2: paragraph, lists, history ---
-        mkBtn(fmtRow2, '⇤', 'Allinea a sinistra', function () { exec('justifyLeft'); }, 'justifyLeft');
-        mkBtn(fmtRow2, '↔', 'Centra', function () { exec('justifyCenter'); }, 'justifyCenter');
-        mkBtn(fmtRow2, '⇥', 'Allinea a destra', function () { exec('justifyRight'); }, 'justifyRight');
-        mkBtn(fmtRow2, '☰', 'Giustifica', function () { exec('justifyFull'); }, 'justifyFull');
-        sep(fmtRow2);
-        mkBtn(fmtRow2, '• Elenco', 'Elenco puntato', function () { exec('insertUnorderedList'); }, 'insertUnorderedList');
-        mkBtn(fmtRow2, '1. Elenco', 'Elenco numerato', function () { exec('insertOrderedList'); }, 'insertOrderedList');
-        mkBtn(fmtRow2, '◀▌', 'Riduci rientro', function () { exec('outdent'); });
-        mkBtn(fmtRow2, '▐▶', 'Aumenta rientro', function () { exec('indent'); });
-        sep(fmtRow2);
-        mkBtn(fmtRow2, '↶', 'Annulla (Ctrl+Z)', function () { exec('undo'); });
-        mkBtn(fmtRow2, '↷', 'Ripeti (Ctrl+Y)', function () { exec('redo'); });
-        mkBtn(fmtRow2, '🕒', 'Inserisci data e ora', function () {
-            exec('insertText', new Date().toLocaleString('it-IT'));
+        // ---------- HOME: Paragrafo ----------
+        const gPara = group(homeRibbon, 'Paragrafo');
+        const paraCol = el('div', 'wp-col'); gPara.appendChild(paraCol);
+        const paraLine1 = el('div', 'wp-line'); const paraLine2 = el('div', 'wp-line');
+        paraCol.appendChild(paraLine1); paraCol.appendChild(paraLine2);
+        mkBtn(paraLine1, ICON.outdent, 'Riduci rientro', function () { exec('outdent'); }, { cls: 'small' });
+        mkBtn(paraLine1, ICON.indent, 'Aumenta rientro', function () { exec('indent'); }, { cls: 'small' });
+
+        const bulletSplit = el('span', 'wp-split'); paraLine1.appendChild(bulletSplit);
+        mkBtn(bulletSplit, ICON.bullets, 'Elenco puntato', function () { exec('insertUnorderedList'); }, { cls: 'small', cmd: 'insertUnorderedList' });
+        mkBtn(bulletSplit, '▾', 'Tipo di elenco', function (e, b) {
+            showPop(b, function (pop) {
+                menuItem(pop, 'Elenco puntato', function () { exec('insertUnorderedList'); }, '•');
+                menuItem(pop, 'Elenco numerato 1. 2. 3.', function () { exec('insertOrderedList'); }, '1.');
+            });
+        }, { cls: 'arrow small' });
+
+        mkBtn(paraLine1, ICON.spacing + '<span style="font-size:8px">▾</span>', 'Spaziatura righe', function (e, b) {
+            showPop(b, function (pop) {
+                LINE_SPACINGS.forEach(function (m) {
+                    // "1,0" "1,15" "1,5" "2,0"... as the real WordPad shows them (String(1.0) would give "1")
+                    menuItem(pop, (Math.round(m * 100) % 10 === 0 ? m.toFixed(1) : m.toFixed(2)).replace('.', ','), function () { applyLineSpacing(m); });
+                });
+            });
+        }, { cls: 'small' });
+
+        mkBtn(paraLine2, ICON.left, 'Allinea a sinistra (Ctrl+L)', function () { exec('justifyLeft'); }, { cls: 'small', cmd: 'justifyLeft' });
+        mkBtn(paraLine2, ICON.center, 'Centra (Ctrl+E)', function () { exec('justifyCenter'); }, { cls: 'small', cmd: 'justifyCenter' });
+        mkBtn(paraLine2, ICON.right, 'Allinea a destra (Ctrl+R)', function () { exec('justifyRight'); }, { cls: 'small', cmd: 'justifyRight' });
+        mkBtn(paraLine2, ICON.justify, 'Giustifica (Ctrl+J)', function () { exec('justifyFull'); }, { cls: 'small', cmd: 'justifyFull' });
+
+        // ---------- HOME: Inserisci ----------
+        const gIns = group(homeRibbon, 'Inserisci');
+        mkBtn(gIns, '<span class="wp-bico">🕒</span><span>Data e ora</span>', 'Inserisci data e ora', function (e, b) {
+            showPop(b, function (pop) {
+                const d = new Date();
+                const pad = function (n) { return String(n).padStart(2, '0'); };
+                [
+                    d.toLocaleDateString('it-IT'),
+                    d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+                    d.toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' }),
+                    d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()),
+                    d.toLocaleTimeString('it-IT'),
+                    d.toLocaleDateString('it-IT') + ' ' + d.toLocaleTimeString('it-IT')
+                ].forEach(function (txt) { menuItem(pop, txt, function () { exec('insertText', txt); }); });
+            });
+        }, { cls: 'big' });
+
+        // ---------- HOME: Modifica ----------
+        const gEdit = group(homeRibbon, 'Modifica');
+        const editCol = el('div', 'wp-col'); gEdit.appendChild(editCol);
+        mkBtn(editCol, '<span>🔍</span><span>Trova</span>', 'Trova (Ctrl+F)', function () { openFind(false); }, { cls: 'row' });
+        mkBtn(editCol, '<span>⇄</span><span>Sostituisci</span>', 'Sostituisci (Ctrl+H)', function () { openFind(true); }, { cls: 'row' });
+        mkBtn(editCol, '<span>▦</span><span>Seleziona tutto</span>', 'Seleziona tutto (Ctrl+A)', function () { exec('selectAll'); }, { cls: 'row' });
+
+        // ---------- VISUALIZZA ----------
+        let zoom = 100;
+        const gZoom = group(viewRibbon, 'Zoom');
+        mkBtn(gZoom, '<span class="wp-bico">＋</span><span>Zoom avanti</span>', 'Zoom avanti', function () { setZoom(zoom + 10); }, { cls: 'big' });
+        mkBtn(gZoom, '<span class="wp-bico">－</span><span>Zoom indietro</span>', 'Zoom indietro', function () { setZoom(zoom - 10); }, { cls: 'big' });
+        mkBtn(gZoom, '<span class="wp-bico">100%</span><span>100%</span>', 'Zoom al 100%', function () { setZoom(100); }, { cls: 'big' });
+        const gShow = group(viewRibbon, 'Mostra o nascondi');
+        const showCol = el('div', 'wp-col'); gShow.appendChild(showCol);
+        function mkCheck(label, checked, onChange) {
+            const l = el('label', 'wp-line');
+            l.style.cursor = 'pointer'; l.style.padding = '3px 4px'; l.style.gap = '6px';
+            const c = el('input'); c.type = 'checkbox'; c.checked = checked;
+            c.addEventListener('change', function () { onChange(c.checked); });
+            l.appendChild(c); l.appendChild(document.createTextNode(label));
+            showCol.appendChild(l);
+        }
+        mkCheck('Righello', true, function (on) { root.classList.toggle('wp-noruler', !on); });
+        mkCheck('Barra di stato', true, function (on) { status.hidden = !on; });
+
+        // ---------- status bar: zoom ----------
+        const zMinus = mkBtn(zoomBox, '－', 'Zoom indietro', function () { setZoom(zoom - 10); }, { cls: 'small' });
+        const zRange = el('input'); zRange.type = 'range'; zRange.min = '20'; zRange.max = '300'; zRange.step = '10'; zRange.value = '100';
+        zRange.setAttribute('aria-label', 'Zoom');
+        const zLbl = el('span', 'wp-zoomlbl', '100%');
+        const zPlus = mkBtn(zoomBox, '＋', 'Zoom avanti', function () { setZoom(zoom + 10); }, { cls: 'small' });
+        zoomBox.insertBefore(zRange, zPlus);
+        zoomBox.insertBefore(zLbl, zMinus);
+        zRange.addEventListener('input', function () { setZoom(parseInt(zRange.value, 10)); });
+
+        function updateLayout() {
+            const eff = (pageArea.clientWidth - 16) / (zoom / 100);
+            // jsdom / hidden windows report 0: keep the wide layout then
+            root.classList.toggle('wp-narrow', eff > 0 && eff < NARROW_BELOW_PX);
+        }
+        function setZoom(z) {
+            zoom = Math.max(20, Math.min(300, Math.round(z / 10) * 10));
+            sheetWrap.style.zoom = String(zoom / 100);
+            zLbl.textContent = zoom + '%';
+            zRange.value = String(zoom);
+            updateLayout();
+        }
+        pageArea.addEventListener('wheel', function (e) {
+            if (!e.ctrlKey) return;
+            e.preventDefault();
+            setZoom(zoom + (e.deltaY < 0 ? 10 : -10));
+        }, { passive: false });
+
+        let resizeObs = null;
+        function onWinResize() { updateLayout(); }
+        if (typeof ResizeObserver !== 'undefined') { resizeObs = new ResizeObserver(onWinResize); resizeObs.observe(pageArea); }
+        else window.addEventListener('resize', onWinResize);
+
+        // ---------- find / replace ----------
+        const findPanel = el('div', 'wp-find');
+        findPanel.hidden = true;
+        findPanel.innerHTML =
+            '<div class="hd"><span class="ft">Trova</span><button type="button" class="wp-btn small fx" title="Chiudi" aria-label="Chiudi">✕</button></div>' +
+            '<input class="wp-in fq" type="text" placeholder="Trova" aria-label="Testo da trovare">' +
+            '<input class="wp-in fr" type="text" placeholder="Sostituisci con" aria-label="Sostituisci con">' +
+            '<div class="rw"><label class="chk"><input type="checkbox" class="fw"> Solo parole intere</label><label class="chk"><input type="checkbox" class="fc"> Maiuscole/minuscole</label></div>' +
+            '<div class="rw"><button type="button" class="wp-pbtn def fn">Trova successivo</button><button type="button" class="wp-pbtn fp">Sostituisci</button><button type="button" class="wp-pbtn fa">Sostituisci tutto</button></div>' +
+            '<div class="msg" role="status"></div>';
+        main.appendChild(findPanel);
+        const fQ = findPanel.querySelector('.fq'), fR = findPanel.querySelector('.fr');
+        const fWhole = findPanel.querySelector('.fw'), fCase = findPanel.querySelector('.fc');
+        const fMsg = findPanel.querySelector('.msg'), fTitle = findPanel.querySelector('.ft');
+        const fBtnNext = findPanel.querySelector('.fn'), fBtnRep = findPanel.querySelector('.fp'), fBtnAll = findPanel.querySelector('.fa');
+
+        function openFind(withReplace) {
+            closePop();
+            saveSelection();
+            findPanel.hidden = false;
+            fR.style.display = withReplace ? '' : 'none';
+            fBtnRep.style.display = withReplace ? '' : 'none';
+            fBtnAll.style.display = withReplace ? '' : 'none';
+            fTitle.textContent = withReplace ? 'Sostituisci' : 'Trova';
+            const picked = savedRange && !savedRange.collapsed ? savedRange.toString() : '';
+            if (picked && picked.indexOf('\n') < 0 && picked.length < 120) fQ.value = picked;
+            fMsg.textContent = '';
+            fQ.focus();
+            fQ.select();
+        }
+        function closeFind() { findPanel.hidden = true; fMsg.textContent = ''; restoreSelection(); }
+
+        function blockOf(n) {
+            let p = n.parentNode;
+            while (p && p !== editor) { if (BLOCK_TAGS.has(p.tagName)) return p; p = p.parentNode; }
+            return editor;
+        }
+        // flat text of the document with a '\n' between paragraphs/<br>, plus where each text node starts,
+        // so a word split across formatting runs ("te" + bold "st") is still found
+        function collectText() {
+            const nodes = [], starts = [];
+            let text = '', lastBlock = null;
+            const walker = document.createTreeWalker(editor, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, null);
+            let n;
+            while ((n = walker.nextNode())) {
+                if (n.nodeType === 1) { if (n.tagName === 'BR') text += '\n'; continue; }
+                const blk = blockOf(n);
+                if (lastBlock !== null && blk !== lastBlock) text += '\n';
+                lastBlock = blk;
+                nodes.push(n); starts.push(text.length);
+                text += n.nodeValue;
+            }
+            return { nodes: nodes, starts: starts, text: text };
+        }
+        function isWordChar(ch) { return !!ch && /[0-9A-Za-z_\u00C0-\u024F]/.test(ch); }
+        function searchFrom(data, query, from, wholeWord, matchCase) {
+            const hay = matchCase ? data.text : data.text.toLowerCase();
+            const q = matchCase ? query : query.toLowerCase();
+            let idx = hay.indexOf(q, from);
+            while (idx >= 0) {
+                if (!wholeWord || (!isWordChar(hay.charAt(idx - 1)) && !isWordChar(hay.charAt(idx + q.length)))) return idx;
+                idx = hay.indexOf(q, idx + 1);
+            }
+            return -1;
+        }
+        function pointAt(data, idx, isEnd) {
+            for (let i = 0; i < data.nodes.length; i++) {
+                const s = data.starts[i], l = data.nodes[i].nodeValue.length;
+                if (isEnd ? (idx > s && idx <= s + l) : (idx >= s && idx < s + l)) return [data.nodes[i], idx - s];
+            }
+            return null;
+        }
+        function selectMatch(data, from, to) {
+            const a = pointAt(data, from, false), b = pointAt(data, to, true);
+            if (!a || !b) return false;
+            const r = document.createRange();
+            r.setStart(a[0], a[1]);
+            r.setEnd(b[0], b[1]);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(r);
+            savedRange = r.cloneRange();
+            try { a[0].parentElement.scrollIntoView({ block: 'nearest' }); } catch (e) { /* cosmetic */ }
+            return true;
+        }
+        function cursorIndex(data) {
+            const r = savedRange;
+            if (!r || !editor.contains(r.endContainer)) return 0;
+            const ec = r.endContainer;
+            if (ec.nodeType === 3) {
+                const i = data.nodes.indexOf(ec);
+                if (i >= 0) return data.starts[i] + r.endOffset;
+            }
+            const probe = document.createRange();
+            probe.setStart(ec, r.endOffset);
+            probe.collapse(true);
+            for (let i = 0; i < data.nodes.length; i++) {
+                if (probe.comparePoint(data.nodes[i], 0) >= 0) return data.starts[i];
+            }
+            return data.text.length;
+        }
+        function findNext() {
+            const q = fQ.value;
+            fMsg.textContent = '';
+            if (!q) { fMsg.textContent = 'Scrivi il testo da cercare.'; return false; }
+            const data = collectText();
+            const whole = fWhole.checked, mc = fCase.checked;
+            let idx = searchFrom(data, q, cursorIndex(data), whole, mc);
+            let wrapped = false;
+            if (idx < 0) { idx = searchFrom(data, q, 0, whole, mc); wrapped = idx >= 0; }
+            if (idx < 0) { fMsg.textContent = 'Testo non trovato.'; return false; }
+            selectMatch(data, idx, idx + q.length);
+            if (wrapped) fMsg.textContent = 'Ricerca ripartita dall\'inizio del documento.';
+            return true;
+        }
+        function selectionIsMatch() {
+            const q = fQ.value;
+            if (!q || !savedRange || savedRange.collapsed || !editor.contains(savedRange.startContainer)) return false;
+            const t = savedRange.toString();
+            const same = fCase.checked ? t === q : t.toLowerCase() === q.toLowerCase();
+            return same;
+        }
+        function replaceOne() {
+            fMsg.textContent = '';
+            if (!fQ.value) { fMsg.textContent = 'Scrivi il testo da cercare.'; return; }
+            if (!selectionIsMatch()) { findNext(); return; }
+            restoreSelection();
+            const rep = fR.value;
+            if (rep === '') document.execCommand('delete'); else document.execCommand('insertText', false, rep);
+            saveSelection();
+            afterEdit();
+            findNext();
+        }
+        function replaceAll() {
+            fMsg.textContent = '';
+            const q = fQ.value;
+            if (!q) { fMsg.textContent = 'Scrivi il testo da cercare.'; return; }
+            const rep = fR.value;
+            const whole = fWhole.checked, mc = fCase.checked;
+            editor.focus();
+            let count = 0, from = 0;
+            for (let guard = 0; guard < 10000; guard++) {
+                const data = collectText();
+                const idx = searchFrom(data, q, from, whole, mc);
+                if (idx < 0) break;
+                if (!selectMatch(data, idx, idx + q.length)) break;
+                if (rep === '') document.execCommand('delete'); else document.execCommand('insertText', false, rep);
+                count++;
+                from = idx + rep.length;
+            }
+            saveSelection();
+            afterEdit();
+            fMsg.textContent = count ? (count === 1 ? '1 sostituzione.' : count + ' sostituzioni.') : 'Testo non trovato.';
+            fMsg.style.color = count ? '#1a6b1a' : '#a31515';
+        }
+        fBtnNext.addEventListener('click', function () { fMsg.style.color = ''; findNext(); });
+        fBtnRep.addEventListener('click', function () { fMsg.style.color = ''; replaceOne(); });
+        fBtnAll.addEventListener('click', replaceAll);
+        findPanel.querySelector('.fx').addEventListener('click', closeFind);
+        findPanel.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') { closeFind(); return; }
+            if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type === 'text') {
+                e.preventDefault();
+                fMsg.style.color = '';
+                if (e.target === fR && fR.style.display !== 'none') replaceOne(); else findNext();
+            }
         });
 
         // ---------- state reflection ----------
@@ -934,7 +1661,7 @@
             toggles.forEach(function (t) {
                 let on = false;
                 try { on = document.queryCommandState(t.cmd); } catch (e) { /* ignore */ }
-                t.btn.classList.toggle('active', !!on);
+                t.btn.classList.toggle('on', !!on);
             });
             try {
                 const name = String(document.queryCommandValue('fontName') || '').replace(/^["']|["']$/g, '').toLowerCase();
@@ -942,10 +1669,10 @@
                 if (opt) fontSel.value = opt.value;
             } catch (e) { /* ignore */ }
             try {
-                let el = sel.anchorNode;
-                if (el && el.nodeType === 3) el = el.parentElement;
-                if (el) {
-                    const pt = Math.round(parseFloat(getComputedStyle(el).fontSize) * 0.75);
+                let node = sel.anchorNode;
+                if (node && node.nodeType === 3) node = node.parentElement;
+                if (node) {
+                    const pt = Math.round(parseFloat(getComputedStyle(node).fontSize) * 0.75);
                     const best = SIZE_LIST.reduce(function (a, b) { return Math.abs(b - pt) < Math.abs(a - pt) ? b : a; }, SIZE_LIST[0]);
                     sizeSel.value = String(best);
                 }
@@ -997,7 +1724,19 @@
         try { document.execCommand('defaultParagraphSeparator', false, 'div'); } catch (e) { /* ignore */ }
 
         editor.addEventListener('keydown', function (e) {
-            if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 's' || e.key === 'S')) { e.preventDefault(); saveRtf(); return; }
+            const mod = (e.ctrlKey || e.metaKey) && !e.altKey;
+            if (mod && !e.shiftKey) {
+                const k = e.key.toLowerCase();
+                if (k === 's') { e.preventDefault(); saveDoc(); return; }
+                if (k === 'o') { e.preventDefault(); fileInput.click(); return; }
+                if (k === 'p') { e.preventDefault(); printDoc(); return; }
+                if (k === 'f') { e.preventDefault(); openFind(false); return; }
+                if (k === 'h') { e.preventDefault(); openFind(true); return; }
+                if (k === 'l') { e.preventDefault(); exec('justifyLeft'); return; }
+                if (k === 'e') { e.preventDefault(); exec('justifyCenter'); return; }
+                if (k === 'r') { e.preventDefault(); exec('justifyRight'); return; }
+                if (k === 'j') { e.preventDefault(); exec('justifyFull'); return; }
+            }
             if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
                 e.preventDefault();
                 document.execCommand('insertText', false, '\t');
@@ -1008,12 +1747,7 @@
         editor.addEventListener('paste', function (e) {
             e.preventDefault();
             const cd = e.clipboardData || window.clipboardData;
-            const text = cd ? cd.getData('text/plain') : '';
-            if (!text) return;
-            text.replace(/\r\n?/g, '\n').split('\n').forEach(function (line, idx) {
-                if (idx > 0) document.execCommand('insertParagraph');
-                if (line) document.execCommand('insertText', false, line);
-            });
+            insertPlainText(cd ? cd.getData('text/plain') : '');
         });
         // dropping a file on the page would otherwise navigate away from the desktop
         editor.addEventListener('dragover', function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) e.preventDefault(); });
@@ -1023,11 +1757,9 @@
                 openFile(e.dataTransfer.files[0]);
             }
         });
-
-        // clicking the grey area around the "page" should put the caret in the
-        // document (at the end), like a real word processor
-        root.querySelector('.wp-page').addEventListener('mousedown', function (e) {
-            if (e.target !== e.currentTarget) return;
+        // clicking the blue-grey area around the sheet puts the caret in the document
+        pageArea.addEventListener('mousedown', function (e) {
+            if (e.target !== pageArea && e.target !== sheetWrap) return;
             e.preventDefault();
             savedRange = null;
             restoreSelection();
@@ -1039,10 +1771,14 @@
             if (draft) setSanitizedHtml(editor, draft);
         } catch (e) { /* storage unavailable - start empty */ }
         updateCounts();
+        setTitle();
+        updateLayout();
 
         if (window.WindowManager && typeof WindowManager.registerCleanup === 'function') {
             WindowManager.registerCleanup(winId, function () {
                 document.removeEventListener('selectionchange', onSelectionChange);
+                document.removeEventListener('pointerdown', onDocPointerDown, true);
+                if (resizeObs) resizeObs.disconnect(); else window.removeEventListener('resize', onWinResize);
                 saveDraftNow(); // don't lose the last <700ms of typing
             });
         }
