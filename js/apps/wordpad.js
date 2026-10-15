@@ -897,6 +897,366 @@
             }
         }
 
+        // ---------- undo / redo (own history) ----------
+        // The browser's native undo can't be used: the character-formatting
+        // toggles below edit the DOM directly, and the native undo stack gets
+        // confused by DOM edits it didn't make. So the editor keeps its own
+        // history of snapshots (HTML + selection) and takes over Ctrl+Z / Ctrl+Y.
+        const hist = { stack: [], idx: -1 };
+        let snapTimer = null;
+        let composing = false;
+
+        function pathOf(node) {
+            const path = [];
+            while (node && node !== editor) {
+                const p = node.parentNode;
+                if (!p) return null;
+                path.unshift(Array.prototype.indexOf.call(p.childNodes, node));
+                node = p;
+            }
+            return node === editor ? path : null;
+        }
+        function nodeAt(path) {
+            let n = editor;
+            for (let i = 0; i < path.length && n; i++) n = n.childNodes[path[i]];
+            return n || null;
+        }
+        function nodeLen(n) { return n.nodeType === 3 ? n.nodeValue.length : n.childNodes.length; }
+        function captureSel() {
+            const sel = window.getSelection();
+            let r = null;
+            if (sel && sel.rangeCount && editor.contains(sel.anchorNode)) r = sel.getRangeAt(0);
+            else if (savedRange) r = savedRange;
+            if (!r) return null;
+            const s = pathOf(r.startContainer), e = pathOf(r.endContainer);
+            return (s && e) ? { s: s, so: r.startOffset, e: e, eo: r.endOffset } : null;
+        }
+        function applySel(c) {
+            if (!c) return false;
+            const sn = nodeAt(c.s), en = nodeAt(c.e);
+            if (!sn || !en) return false;
+            try {
+                const r = document.createRange();
+                r.setStart(sn, Math.min(c.so, nodeLen(sn)));
+                r.setEnd(en, Math.min(c.eo, nodeLen(en)));
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(r);
+                return true;
+            } catch (e) { return false; }
+        }
+        // characters before a point / the text point for a character count: independent of how the text
+        // happens to be split into nodes, so it survives normalize() (which merges adjacent text nodes)
+        function textPos(node, off) {
+            const q = document.createRange();
+            q.selectNodeContents(editor);
+            q.setEnd(node, off);
+            return q.toString().length;
+        }
+        function textPoint(pos, preferEnd) {
+            const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+            let acc = 0, n, last = null;
+            while ((n = walker.nextNode())) {
+                const l = n.nodeValue.length;
+                if (preferEnd ? (pos > acc && pos <= acc + l) : (pos >= acc && pos < acc + l)) return [n, pos - acc];
+                acc += l;
+                last = n;
+            }
+            return (last && pos >= acc) ? [last, last.nodeValue.length] : null;
+        }
+        function normalizeKeepingSelection() {
+            const sel = window.getSelection();
+            let a = null;
+            if (sel && sel.rangeCount && editor.contains(sel.anchorNode)) {
+                const r = sel.getRangeAt(0);
+                if (r.startContainer.nodeType === 3 && r.endContainer.nodeType === 3) {
+                    a = { s: textPos(r.startContainer, r.startOffset), e: textPos(r.endContainer, r.endOffset) };
+                }
+            }
+            editor.normalize();
+            if (!a) return;
+            const sp = textPoint(a.s, false);
+            const ep = a.s === a.e ? sp : (textPoint(a.e, true) || textPoint(a.e, false));
+            if (!sp || !ep) return;
+            try {
+                const r = document.createRange();
+                r.setStart(sp[0], sp[1]);
+                r.setEnd(ep[0], ep[1]);
+                sel.removeAllRanges();
+                sel.addRange(r);
+                saveSelection();
+            } catch (e) { /* leave whatever the browser made of it */ }
+        }
+        function snapshot() {
+            if (composing) return;           // never touch the DOM while an IME is composing
+            clearTimeout(snapTimer);
+            snapTimer = null;
+            normalizeKeepingSelection();     // so a stored selection path matches what re-parsing the HTML gives back
+            const html = editor.innerHTML;
+            const top = hist.stack[hist.idx];
+            if (top && top.html === html) return;
+            hist.stack.length = hist.idx + 1; // a new edit discards the redo branch
+            hist.stack.push({ html: html, sel: captureSel() });
+            if (hist.stack.length > 200) hist.stack.shift();
+            hist.idx = hist.stack.length - 1;
+        }
+        function snapshotIfChanged() {
+            if (composing) return;
+            const top = hist.stack[hist.idx];
+            if (!top || top.html !== editor.innerHTML) snapshot();
+        }
+        function scheduleSnapshot() { clearTimeout(snapTimer); snapTimer = setTimeout(snapshot, 500); }
+        function beginEdit() { snapshotIfChanged(); }   // call BEFORE an edit: keeps the pre-edit state undoable
+        function commit() { afterEdit(); snapshot(); }  // call AFTER an edit: records the new state at once
+        function restoreSnapshot(s) {
+            clearTimeout(snapTimer);
+            snapTimer = null;
+            editor.innerHTML = s.html;       // our own earlier serialisation of this very editor
+            savedRange = null;
+            editor.focus();
+            if (!applySel(s.sel)) {
+                const r = document.createRange();
+                r.selectNodeContents(editor);
+                r.collapse(false);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(r);
+            }
+            saveSelection();
+            afterEdit();
+        }
+        function doUndo() {
+            if (composing) return;           // restoring HTML would wipe the text the IME is still composing
+            closePop();
+            clearTimeout(snapTimer);
+            snapTimer = null;
+            snapshotIfChanged();             // typing that hasn't been snapshotted yet becomes its own step
+            if (hist.idx <= 0) return;
+            hist.idx--;
+            restoreSnapshot(hist.stack[hist.idx]);
+        }
+        function doRedo() {
+            if (composing) return;
+            closePop();
+            clearTimeout(snapTimer);
+            snapTimer = null;
+            snapshotIfChanged();
+            if (hist.idx >= hist.stack.length - 1) return;
+            hist.idx++;
+            restoreSnapshot(hist.stack[hist.idx]);
+        }
+
+        // ---------- character formatting (own implementation) ----------
+        // execCommand's bold/italic/underline/strikethrough toggling left pieces
+        // of the old formatting behind when the selection cut through text that
+        // was already formatted. Doing it on the DOM is deterministic: split the
+        // text at the selection, make sure no ancestor carries the decoration
+        // over the selected runs (a child can never cancel its parent's
+        // underline), then set or clear the style on each run's own <span>.
+        function parseStyle(el) {
+            const out = [];
+            String(el.getAttribute('style') || '').split(';').forEach(function (d) {
+                const k = d.indexOf(':');
+                if (k < 0) return;
+                const p = d.slice(0, k).trim().toLowerCase();
+                if (p) out.push([p, d.slice(k + 1).trim()]);
+            });
+            return out;
+        }
+        function writeStyle(el, decls) {
+            const s = decls.map(function (d) { return d[0] + ': ' + d[1]; }).join('; ');
+            if (s) el.setAttribute('style', s); else el.removeAttribute('style');
+        }
+        function getDecl(el, prop) {
+            const d = parseStyle(el).filter(function (x) { return x[0] === prop; })[0];
+            return d ? d[1].toLowerCase() : '';
+        }
+        function setDecl(el, prop, val) {
+            const d = parseStyle(el).filter(function (x) { return x[0] !== prop; });
+            if (val) d.push([prop, val]);
+            writeStyle(el, d);
+        }
+        function decoTokens(el) {
+            const toks = [];
+            parseStyle(el).forEach(function (d) {
+                if (d[0] !== 'text-decoration' && d[0] !== 'text-decoration-line') return;
+                ['underline', 'line-through'].forEach(function (t) {
+                    if (d[1].toLowerCase().indexOf(t) >= 0 && toks.indexOf(t) < 0) toks.push(t);
+                });
+            });
+            return toks;
+        }
+        function setDecoTokens(el, toks) {
+            const d = parseStyle(el).filter(function (x) { return x[0] !== 'text-decoration' && x[0] !== 'text-decoration-line'; });
+            if (toks.length) d.push(['text-decoration', toks.join(' ')]);
+            writeStyle(el, d);
+        }
+
+        const FMT = {
+            bold: { kind: 'value', tags: ['B', 'STRONG'], prop: 'font-weight', setOn: 'bold', setOff: 'normal',
+                on: function (v) { return v === 'bold' || v === 'bolder' || (/^\d+$/.test(v) && parseInt(v, 10) >= 600); },
+                off: function (v) { return v === 'normal' || v === 'lighter' || (/^\d+$/.test(v) && parseInt(v, 10) < 600); } },
+            italic: { kind: 'value', tags: ['I', 'EM'], prop: 'font-style', setOn: 'italic', setOff: 'normal',
+                on: function (v) { return v === 'italic' || v === 'oblique'; },
+                off: function (v) { return v === 'normal'; } },
+            underline: { kind: 'deco', tags: ['U'], token: 'underline' },
+            strikeThrough: { kind: 'deco', tags: ['S', 'STRIKE', 'DEL'], token: 'line-through' }
+        };
+
+        // is `kind` in effect for this node (text node, or element = at that element)?
+        function formatAt(kind, node) {
+            const f = FMT[kind];
+            let el = node.nodeType === 1 ? node : node.parentNode;
+            for (; el && el !== editor; el = el.parentNode) {
+                if (el.nodeType !== 1) continue;
+                if (f.kind === 'value') {
+                    const v = getDecl(el, f.prop);   // an inline style beats the tag's default look
+                    if (v && f.on(v)) return true;
+                    if (v && f.off(v)) return false;
+                    if (f.tags.indexOf(el.tagName) >= 0) return true;
+                } else if (f.tags.indexOf(el.tagName) >= 0 || decoTokens(el).indexOf(f.token) >= 0) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function leafSpan(t) {
+            const p = t.parentNode;
+            if (p !== editor && p.nodeName === 'SPAN' && p.childNodes.length === 1) return p;
+            const s = document.createElement('span');
+            p.replaceChild(s, t);
+            s.appendChild(t);
+            return s;
+        }
+        function textNodesIn(range) {
+            const out = [];
+            const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+            let n;
+            while ((n = walker.nextNode())) {
+                if (n.nodeValue === '' || !range.intersectsNode(n)) continue;
+                // intersectsNode() is also true for a node the range merely touches (a selection that
+                // starts at the very end of a line, or ends at the very start of the next one),
+                // so check that at least one character is really covered
+                const from = (n === range.startContainer) ? range.startOffset : 0;
+                const to = (n === range.endContainer) ? range.endOffset : n.nodeValue.length;
+                if (to > from) out.push(n);
+            }
+            return out;
+        }
+        // cut the text nodes at both ends of the range so the selection is made of whole text nodes
+        function splitBoundaries(range) {
+            let sc = range.startContainer, so = range.startOffset, ec = range.endContainer, eo = range.endOffset;
+            const same = sc === ec;
+            if (ec.nodeType === 3 && eo > 0 && eo < ec.nodeValue.length) ec.splitText(eo);
+            if (sc.nodeType === 3 && so > 0 && so < sc.nodeValue.length) {
+                const tail = sc.splitText(so);
+                if (same) { ec = tail; eo = eo - so; }
+                sc = tail;
+                so = 0;
+            }
+            const r = document.createRange();
+            r.setStart(sc, so);
+            r.setEnd(ec, eo);
+            return r;
+        }
+        // Move a decoration off an ancestor and onto every text run inside it
+        // (looks identical), so it can then be removed from just the selected runs.
+        function flattenToken(el, kind) {
+            const f = FMT[kind];
+            const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+            const texts = [];
+            let t;
+            while ((t = walker.nextNode())) if (t.nodeValue !== '') texts.push(t);
+            texts.forEach(function (tn) {
+                const leaf = leafSpan(tn);
+                const toks = decoTokens(leaf);
+                if (toks.indexOf(f.token) < 0) { toks.push(f.token); setDecoTokens(leaf, toks); }
+            });
+            if (f.tags.indexOf(el.tagName) >= 0) {          // <u> / <s> / <strike> / <del>: becomes a plain span
+                const span = document.createElement('span');
+                const st = el.getAttribute('style');
+                if (st) span.setAttribute('style', st);
+                while (el.firstChild) span.appendChild(el.firstChild);
+                el.parentNode.replaceChild(span, el);
+                tidySpan(span);                              // a bare wrapper left over: unwrap it
+            } else {
+                setDecoTokens(el, decoTokens(el).filter(function (x) { return x !== f.token; }));
+                tidySpan(el);
+            }
+        }
+        function setFormat(kind, textNode, turnOn) {
+            const f = FMT[kind];
+            const leaf = leafSpan(textNode);
+            if (f.kind === 'value') {
+                setDecl(leaf, f.prop, turnOn ? f.setOn : f.setOff);
+                // already what the surroundings give? then the explicit style is redundant
+                if (formatAt(kind, leaf.parentNode) === turnOn) setDecl(leaf, f.prop, null);
+            } else {
+                const toks = decoTokens(leaf).filter(function (x) { return x !== f.token; });
+                if (turnOn) toks.push(f.token);
+                setDecoTokens(leaf, toks);
+            }
+            return leaf;
+        }
+        function sameSpan(a, b) {
+            return a && b && a.nodeType === 1 && b.nodeType === 1 && a.tagName === 'SPAN' && b.tagName === 'SPAN' &&
+                a.attributes.length === 1 && b.attributes.length === 1 && a.getAttribute('style') === b.getAttribute('style');
+        }
+        function tidySpan(span) {
+            if (!span.parentNode) return;
+            if (span.attributes.length === 0) {                // a span with no attributes does nothing: unwrap it
+                const p = span.parentNode;
+                while (span.firstChild) p.insertBefore(span.firstChild, span);
+                p.removeChild(span);
+                return;
+            }
+            if (sameSpan(span.previousSibling, span)) {
+                const prev = span.previousSibling;
+                while (span.firstChild) prev.appendChild(span.firstChild);
+                span.parentNode.removeChild(span);
+                span = prev;
+            }
+            if (sameSpan(span, span.nextSibling)) {
+                const next = span.nextSibling;
+                while (next.firstChild) span.appendChild(next.firstChild);
+                next.parentNode.removeChild(next);
+            }
+        }
+
+        function toggleFormat(kind) {
+            closePop();
+            restoreSelection();
+            const sel = window.getSelection();
+            if (!sel || !sel.rangeCount) return;
+            if (sel.getRangeAt(0).collapsed) { exec(kind); return; }   // caret only: native "typing style"
+            beginEdit();
+            const range = splitBoundaries(sel.getRangeAt(0));
+            const nodes = textNodesIn(range);
+            if (!nodes.length) return;
+            const f = FMT[kind];
+            const turnOn = !nodes.every(function (n) { return formatAt(kind, n); });  // mixed selection -> apply to all first
+            if (f.kind === 'deco') {
+                nodes.forEach(function (n) {
+                    const carriers = [];
+                    for (let el = n.parentNode; el && el !== editor; el = el.parentNode) {
+                        if (el.nodeType === 1 && (f.tags.indexOf(el.tagName) >= 0 || decoTokens(el).indexOf(f.token) >= 0)) carriers.push(el);
+                    }
+                    carriers.forEach(function (el) { if (el.parentNode) flattenToken(el, kind); });
+                });
+            }
+            const leaves = nodes.map(function (n) { return setFormat(kind, n, turnOn); });
+            leaves.forEach(tidySpan);
+            // keep the same text selected
+            const r = document.createRange();
+            r.setStart(nodes[0], 0);
+            r.setEnd(nodes[nodes.length - 1], nodes[nodes.length - 1].nodeValue.length);
+            sel.removeAllRanges();
+            sel.addRange(r);
+            saveSelection();
+            commit();
+        }
+
         // ---------- popups (menus, palettes) ----------
         let openPop = null;
         function closePop() {
@@ -996,11 +1356,12 @@
         // ---------- editing commands ----------
         function exec(cmd, val) {
             closePop();
+            beginEdit();
             restoreSelection();
             try { document.execCommand('styleWithCSS', false, true); } catch (e) { /* ignore */ }
             document.execCommand(cmd, false, val === undefined ? null : val);
             saveSelection();
-            afterEdit();
+            commit();
         }
 
         // execCommand only knows font sizes 1-7: ask for 7 and swap the result
@@ -1017,6 +1378,7 @@
         }
         function applySize(pt) {
             closePop();
+            beginEdit();
             restoreSelection();
             pendingPt = pt;
             try { document.execCommand('styleWithCSS', false, false); } catch (e) { /* ignore */ }
@@ -1024,29 +1386,31 @@
             try { document.execCommand('styleWithCSS', false, true); } catch (e) { /* ignore */ }
             convertSizeMarkers();
             saveSelection();
-            afterEdit();
+            commit();
         }
 
         function insertPlainText(text) {
             if (!text) return;
+            beginEdit();
             text.replace(/\r\n?/g, '\n').split('\n').forEach(function (line, idx) {
                 if (idx > 0) document.execCommand('insertParagraph');
                 if (line) document.execCommand('insertText', false, line);
             });
-            afterEdit();
+            commit();
         }
         function doCopy(cut) {
             closePop();
             restoreSelection();
             const text = String(window.getSelection());
             if (!text) return;
+            if (cut) beginEdit();
             let done = false;
             try { done = document.execCommand(cut ? 'cut' : 'copy'); } catch (e) { done = false; }
             if (!done && navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(text).then(function () {
-                    if (cut) { restoreSelection(); document.execCommand('delete'); afterEdit(); }
+                    if (cut) { restoreSelection(); document.execCommand('delete'); commit(); }
                 }, function () { noteEl.textContent = 'Il browser non consente di copiare da qui'; });
-            } else if (done && cut) afterEdit();
+            } else if (done && cut) commit();
         }
         function doPaste() {
             closePop();
@@ -1094,6 +1458,7 @@
         }
         function applyLineSpacing(mult) {
             closePop();
+            beginEdit();
             restoreSelection();
             wrapRootInline();
             const sel = window.getSelection();
@@ -1114,7 +1479,7 @@
                 if (!b.getAttribute('style')) b.removeAttribute('style');
             });
             saveSelection();
-            afterEdit();
+            commit();
         }
 
         // ---------- document state: name, title ----------
@@ -1135,12 +1500,13 @@
         }
         function newDoc() {
             closePop();
+            beginEdit();
             sendToBin();
             editor.textContent = '';
             savedRange = null;
             docName = 'Documento'; docExt = 'rtf'; docNamed = false;
             setTitle();
-            afterEdit();
+            commit();
             editor.focus();
         }
         function downloadDoc(ext) {
@@ -1232,13 +1598,14 @@
                         });
                     }
                 } catch (e) { showError('WordPad - Apri', e.message || 'File non valido.'); return; }
+                beginEdit();
                 sendToBin();
                 editor.textContent = '';
                 editor.appendChild(frag);
                 savedRange = null;
                 docName = safeFileName(file.name); docExt = isRtf ? 'rtf' : 'txt'; docNamed = true;
                 setTitle();
-                afterEdit();
+                commit();
                 noteEl.textContent = 'Aperto: ' + file.name;
             };
             reader.readAsArrayBuffer(file);
@@ -1271,8 +1638,8 @@
 
         // quick access: save / undo / redo
         mkBtn(qat, ICON.save, 'Salva (Ctrl+S)', saveDoc, { cls: 'small' });
-        mkBtn(qat, '↶', 'Annulla (Ctrl+Z)', function () { exec('undo'); }, { cls: 'small' });
-        mkBtn(qat, '↷', 'Ripeti (Ctrl+Y)', function () { exec('redo'); }, { cls: 'small' });
+        mkBtn(qat, '↶', 'Annulla (Ctrl+Z)', doUndo, { cls: 'small' });
+        mkBtn(qat, '↷', 'Ripeti (Ctrl+Y)', doRedo, { cls: 'small' });
 
         // ---------- HOME: Appunti ----------
         const gClip = group(homeRibbon, 'Appunti');
@@ -1313,10 +1680,10 @@
         mkBtn(fontLine1, '<span style="font-size:14px">A</span><span style="font-size:8px">▲</span>', 'Ingrandisci carattere', function () { stepSize(1); }, { cls: 'small' });
         mkBtn(fontLine1, '<span style="font-size:10px">A</span><span style="font-size:8px">▼</span>', 'Riduci carattere', function () { stepSize(-1); }, { cls: 'small' });
 
-        mkBtn(fontLine2, '<b>G</b>', 'Grassetto (Ctrl+B)', function () { exec('bold'); }, { cls: 'small', cmd: 'bold' });
-        mkBtn(fontLine2, '<i>C</i>', 'Corsivo (Ctrl+I)', function () { exec('italic'); }, { cls: 'small', cmd: 'italic' });
-        mkBtn(fontLine2, '<u>S</u>', 'Sottolineato (Ctrl+U)', function () { exec('underline'); }, { cls: 'small', cmd: 'underline' });
-        mkBtn(fontLine2, '<s>abc</s>', 'Barrato', function () { exec('strikeThrough'); }, { cls: 'small', cmd: 'strikeThrough' });
+        mkBtn(fontLine2, '<b>G</b>', 'Grassetto (Ctrl+B)', function () { toggleFormat('bold'); }, { cls: 'small', cmd: 'bold' });
+        mkBtn(fontLine2, '<i>C</i>', 'Corsivo (Ctrl+I)', function () { toggleFormat('italic'); }, { cls: 'small', cmd: 'italic' });
+        mkBtn(fontLine2, '<u>S</u>', 'Sottolineato (Ctrl+U)', function () { toggleFormat('underline'); }, { cls: 'small', cmd: 'underline' });
+        mkBtn(fontLine2, '<s>abc</s>', 'Barrato', function () { toggleFormat('strikeThrough'); }, { cls: 'small', cmd: 'strikeThrough' });
         mkBtn(fontLine2, 'x<sub>2</sub>', 'Pedice', function () { exec('subscript'); }, { cls: 'small', cmd: 'subscript' });
         mkBtn(fontLine2, 'x<sup>2</sup>', 'Apice', function () { exec('superscript'); }, { cls: 'small', cmd: 'superscript' });
         fontLine2.appendChild(el('span', 'wp-sep'));
@@ -1370,11 +1737,12 @@
             title: 'Colore di evidenziazione del testo', glyph: '<span class="wp-aico" style="font-size:13px">✎</span>', initial: '#fff200',
             apply: function (c) {
                 closePop();
+                beginEdit();
                 restoreSelection();
                 try { document.execCommand('styleWithCSS', false, true); } catch (e) { /* ignore */ }
                 if (!document.execCommand('hiliteColor', false, c)) document.execCommand('backColor', false, c);
                 saveSelection();
-                afterEdit();
+                commit();
             },
             noneLabel: 'Nessun colore', noneValue: 'transparent'
         });
@@ -1612,11 +1980,12 @@
             fMsg.textContent = '';
             if (!fQ.value) { fMsg.textContent = 'Scrivi il testo da cercare.'; return; }
             if (!selectionIsMatch()) { findNext(); return; }
+            beginEdit();
             restoreSelection();
             const rep = fR.value;
             if (rep === '') document.execCommand('delete'); else document.execCommand('insertText', false, rep);
             saveSelection();
-            afterEdit();
+            commit();
             findNext();
         }
         function replaceAll() {
@@ -1625,6 +1994,7 @@
             if (!q) { fMsg.textContent = 'Scrivi il testo da cercare.'; return; }
             const rep = fR.value;
             const whole = fWhole.checked, mc = fCase.checked;
+            beginEdit();
             editor.focus();
             let count = 0, from = 0;
             for (let guard = 0; guard < 10000; guard++) {
@@ -1637,7 +2007,7 @@
                 from = idx + rep.length;
             }
             saveSelection();
-            afterEdit();
+            commit();
             fMsg.textContent = count ? (count === 1 ? '1 sostituzione.' : count + ' sostituzioni.') : 'Testo non trovato.';
             fMsg.style.color = count ? '#1a6b1a' : '#a31515';
         }
@@ -1658,9 +2028,16 @@
         function updateState() {
             const sel = window.getSelection();
             if (!sel || !sel.rangeCount || !editor.contains(sel.anchorNode)) return;
+            const rng = sel.getRangeAt(0);
             toggles.forEach(function (t) {
                 let on = false;
-                try { on = document.queryCommandState(t.cmd); } catch (e) { /* ignore */ }
+                if (FMT[t.cmd] && !rng.collapsed) {
+                    // same rule the toggle itself uses: on only when every selected run has it
+                    const nodes = textNodesIn(rng);
+                    on = nodes.length > 0 && nodes.every(function (n) { return formatAt(t.cmd, n); });
+                } else {
+                    try { on = document.queryCommandState(t.cmd); } catch (e) { /* ignore */ }
+                }
                 t.btn.classList.toggle('on', !!on);
             });
             try {
@@ -1718,13 +2095,33 @@
             clearTimeout(saveTimer);
             saveTimer = setTimeout(saveDraftNow, 700);
         }
-        editor.addEventListener('input', afterEdit);
+        editor.addEventListener('input', function () { afterEdit(); if (!composing) scheduleSnapshot(); });
+        editor.addEventListener('compositionstart', function () { composing = true; });
+        editor.addEventListener('compositionend', function () { composing = false; scheduleSnapshot(); });
+        // menu / IME / spell-check "undo", "redo" and "bold" arrive as beforeinput events: route them to our own code
+        editor.addEventListener('beforeinput', function (e) {
+            const t = e.inputType;
+            if (t === 'historyUndo') { e.preventDefault(); doUndo(); }
+            else if (t === 'historyRedo') { e.preventDefault(); doRedo(); }
+            else if (t === 'formatBold') { e.preventDefault(); toggleFormat('bold'); }
+            else if (t === 'formatItalic') { e.preventDefault(); toggleFormat('italic'); }
+            else if (t === 'formatUnderline') { e.preventDefault(); toggleFormat('underline'); }
+            else if (t === 'formatStrikeThrough') { e.preventDefault(); toggleFormat('strikeThrough'); }
+        });
 
         // ---------- editor behaviour ----------
         try { document.execCommand('defaultParagraphSeparator', false, 'div'); } catch (e) { /* ignore */ }
 
         editor.addEventListener('keydown', function (e) {
             const mod = (e.ctrlKey || e.metaKey) && !e.altKey;
+            const kk = (e.key || '').toLowerCase();
+            if (mod && kk === 'z') { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); return; }
+            if (mod && kk === 'y') { e.preventDefault(); doRedo(); return; }
+            if (mod && !e.shiftKey && (kk === 'b' || kk === 'i' || kk === 'u')) {
+                e.preventDefault();
+                toggleFormat(kk === 'b' ? 'bold' : kk === 'i' ? 'italic' : 'underline');
+                return;
+            }
             if (mod && !e.shiftKey) {
                 const k = e.key.toLowerCase();
                 if (k === 's') { e.preventDefault(); saveDoc(); return; }
@@ -1773,12 +2170,14 @@
         updateCounts();
         setTitle();
         updateLayout();
+        snapshot(); // the starting state: the first thing Undo can go back to
 
         if (window.WindowManager && typeof WindowManager.registerCleanup === 'function') {
             WindowManager.registerCleanup(winId, function () {
                 document.removeEventListener('selectionchange', onSelectionChange);
                 document.removeEventListener('pointerdown', onDocPointerDown, true);
                 if (resizeObs) resizeObs.disconnect(); else window.removeEventListener('resize', onWinResize);
+                clearTimeout(snapTimer);
                 saveDraftNow(); // don't lose the last <700ms of typing
             });
         }
