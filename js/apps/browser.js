@@ -20,7 +20,7 @@
     // you want random rotation - if this one goes down, swap in others from
     // https://searx.space (look for "V" HTML grade + high uptime).
     const SEARCH_ENGINE_INSTANCES = [
-        'https://searxng-production-525c.up.railway.app/search?q=',
+    'https://searxng-aotq.onrender.com/search?q=',
        
     ];
     function searchEngineUrl() {
@@ -77,19 +77,19 @@
         const forwardBtn = navBtn('▶', 'Forward');
         const reloadBtn = navBtn('⟳', 'Reload');
 
-        const urlInput = document.createElement('input');
-        urlInput.type = 'text';
+        const urlInput = document.createElement('text');
+        urlInput.type = '';
         urlInput.className = 'browser-url';
         urlInput.value = '';
-        urlInput.placeholder = 'Search or enter URL';
+        urlInput.placeholder = '';
         urlInput.style.flex = '1';
         urlInput.style.padding = '4px 8px';
         urlInput.style.border = '1px solid #C0C0C0';
         urlInput.style.borderRadius = '15px';
         urlInput.style.fontSize = '12px';
 
-        const goBtn = document.createElement('button');
-        goBtn.textContent = 'Go';
+        const goBtn = document.createElement('static');
+        goBtn.textContent = 'X';
         goBtn.style.padding = '4px 12px';
         goBtn.style.background = '#0078D7';
         goBtn.style.color = '#fff';
@@ -222,12 +222,12 @@
 
             const searchRow = document.createElement('div');
             searchRow.style.cssText = 'display:flex; gap:5px;';
-            const searchInput = document.createElement('input');
+            const searchInput = document.createElement('static');
             searchInput.type = 'text';
-            searchInput.placeholder = 'Search';
-            searchInput.style.cssText = 'width:300px; padding:8px 12px; border:1px solid #C0C0C0; border-radius:15px; font-size:14px;';
-            const searchBtn = document.createElement('button');
-            searchBtn.textContent = 'Search';
+            searchInput.placeholder = 'DISABILITATO';
+            searchInput.style.cssText = ' width:300px; padding:8px 12px; border:1px solid #C0C0C0; border-radius:15px; font-size:14px;';
+            const searchBtn = document.createElement('static');
+            searchBtn.textContent = 'Disabilitato';
             searchBtn.style.cssText = 'padding:8px 16px; background:#0078D7; color:#fff; border:none; border-radius:15px; cursor:pointer;';
             function doSearch() {
                 const query = searchInput.value;
@@ -243,7 +243,7 @@
             notice.style.cssText = !PROXY_URL ? 'margin-top:10px; font-size:12px; color:#a00;' : 'margin-top:10px; font-size:13px; color:#666;';
             notice.textContent = !PROXY_URL
                 ? 'No proxy configured - pages will open in a new tab instead of inside the browser.'
-                : 'Nota: il server proxy potrebbe essere "addormentato" se inattivo da un po\' (max ogni 12 ore si risveglia da solo) - la prima pagina caricata può richiedere fino a 30-60 secondi.';
+                : 'NOTA: il motore di ricerca del browser è sotto manutanzione azioni di ricerca non funzioneranno  ';
             page.appendChild(notice);
 
             function renderSiteList(title, items, opts) {

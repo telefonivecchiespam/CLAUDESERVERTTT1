@@ -16,6 +16,7 @@ window.initPrivacy = function(container) {
                 <li><code>browser_bookmarks_v1</code> — i preferiti salvati nel Browser.</li>
                 <li><code>browser_recent_v1</code> — la cronologia recente del Browser.</li>
                 <li><code>wordpad_draft</code> — la bozza del documento di WordPad (si aggiorna mentre scrivi, così non la perdi se chiudi per sbaglio).</li>
+                <li><code>wordpad_draft_images</code> — le immagini presenti nella bozza di WordPad (se sono troppo grandi per lo spazio del browser, la bozza conserva solo il testo e te lo segnala).</li>
                 <li><code>settings_wallpaper</code>, <code>settings_wallpaper_opacity</code>, <code>settings_log_visible</code> — le tue preferenze dall'app Impostazioni (incluso lo sfondo che carichi, se lo carichi).</li>
             </ul>
             <p>Questi dati restano solo sul tuo dispositivo, non vengono mai inviati a nessun server
@@ -46,14 +47,14 @@ window.initPrivacy = function(container) {
                 quello della Chat e il reverse-proxy del Browser. Il traffico di queste app (mosse di gioco,
                 messaggi chat, pagine web richieste dal Browser) passa dai server di Render prima di
                 raggiungere l'altro giocatore/utente o il sito esterno.</li>
-                <li><strong>Railway</strong> (railway.com) — ospita la nostra istanza <strong>SearXNG</strong>
-                (<code>searxng-production-525c.up.railway.app</code>), il motore di ricerca usato dall'app
+                <li><strong>SearXNG</strong> Sempre hostato su render,al momento non disponibile
+                (<code>https://searxng-aotq.onrender.com/</code>), il motore di ricerca usato dall'app
                 Browser. Le query di ricerca passano da lì prima di essere inoltrate ai motori aggregati
                 (Bing, Yahoo, ecc.).</li>
             </ul>
-            <p>Render e Railway sono infrastrutture di hosting: vedono il traffico che attraversa i loro
-            server (come qualunque hosting), ma non è dato che raccogliamo o analizziamo noi. Nessuno dei
-            due servizi viene usato qui per pubblicità o profilazione.</p>
+            <p>Render è un infrastruttura di hosting: vede il traffico che attraversa i loro
+            server (come qualunque hosting), ma non è dato che raccogliamo o analizziamo noi. Nessun
+            servizio viene usato o verra usato in futuro per pubblicità o profilazione.</p>
 
             <h3 style="font-size:13px; margin:14px 0 4px;">🎵 Media Player</h3>
             <p>I file audio/video che apri restano solo nel tuo browser (Object URL locale): non vengono
@@ -64,7 +65,9 @@ window.initPrivacy = function(container) {
             <p>I documenti che scrivi, apri o salvi (.rtf, .txt) vengono elaborati solo nel tuo browser:
             non vengono mai caricati su nessun server. Il salvataggio è un normale download sul tuo
             dispositivo. L'unica copia che resta nel sito è la bozza automatica in <code>localStorage</code>
-            (cancellala svuotando il documento con "Nuovo", o cancellando i dati del sito dal browser).</p>
+            (cancellala svuotando il documento con "Nuovo", o cancellando i dati del sito dal browser).
+            Anche le immagini che inserisci (dal pulsante, incollandole o trascinandole) restano solo nel
+            browser: vengono ridimensionate e convertite sul tuo dispositivo, senza passare da nessun server.</p>
 
             <h3 style="font-size:13px; margin:14px 0 4px;">🎮 Tris, Scacchi</h3>
             <p>Solo il nome scelto per la partita viene inviato al server di gioco, e solo per la durata

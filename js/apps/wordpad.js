@@ -25,6 +25,9 @@
     const FONT_LIST = ['Calibri', 'Arial', 'Times New Roman', 'Courier New', 'Georgia', 'Verdana', 'Tahoma', 'Comic Sans MS'];
     const SIZE_LIST = [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72];
     const MAX_OPEN_BYTES = 5 * 1024 * 1024;
+    const MAX_IMG_BYTES = 12 * 1024 * 1024;   // largest picture file accepted (it is then scaled down)
+    const TEXT_WIDTH_PX = 554;                // A4 text width at 96 dpi: 794 - 2 x 120 margin
+    const IMG_KEY = 'wordpad_draft_images';
     // Word/WordPad "single" line spacing is the font's natural line height
     // (~1.22 x the size for Calibri), not 1.0 x. The editor shows
     // multiplier x LH_BASE; the RTF stores the plain multiplier (\sl240 = 1.0).
@@ -113,6 +116,108 @@
     }
 
     // =====================================================================
+    // Pictures (PNG and JPEG only: the two formats RTF can embed directly)
+    // =====================================================================
+    const MAX_IMG_SIDE = 1400;   // longest side, in pixels, of an inserted picture; bigger ones are scaled down
+
+    function bytesToHex(bytes) {
+        let out = '';
+        for (let i = 0; i < bytes.length; i++) { const h = bytes[i].toString(16); out += h.length < 2 ? '0' + h : h; }
+        return out;
+    }
+    function hexToBytes(hex) {
+        const n = hex.length >> 1;
+        const out = new Uint8Array(n);
+        for (let i = 0; i < n; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+        return out;
+    }
+    function bytesToB64(bytes) {
+        let bin = '';
+        for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+        return btoa(bin);
+    }
+    function b64ToBytes(b64) {
+        const bin = atob(b64);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+    }
+    // data:image/png;base64,... or data:image/jpeg;base64,...  (nothing else is ever accepted)
+    function parseDataUrl(src) {
+        const m = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+\/=\s]+)$/i.exec(String(src || '').trim());
+        return m ? { mime: 'image/' + m[1].toLowerCase(), b64: m[2].replace(/\s+/g, '') } : null;
+    }
+    // pixel size read straight from the file header, so it never depends on the browser decoding the image
+    function imageSize(bytes, mime) {
+        if (mime === 'image/png') {
+            if (bytes.length < 24 || bytes[0] !== 0x89 || bytes[1] !== 0x50 || bytes[2] !== 0x4E || bytes[3] !== 0x47) return null;
+            const w = ((bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19]) >>> 0;
+            const h = ((bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23]) >>> 0;
+            return (w > 0 && h > 0 && w < 100000 && h < 100000) ? { w: w, h: h } : null;
+        }
+        if (mime === 'image/jpeg') {
+            if (bytes.length < 4 || bytes[0] !== 0xFF || bytes[1] !== 0xD8) return null;
+            let i = 2;
+            while (i + 9 < bytes.length) {
+                if (bytes[i] !== 0xFF) { i++; continue; }
+                const m = bytes[i + 1];
+                if (m === 0xD8 || m === 0x01 || (m >= 0xD0 && m <= 0xD7) || m === 0xFF) { i += (m === 0xFF ? 1 : 2); continue; }
+                const len = (bytes[i + 2] << 8) | bytes[i + 3];
+                if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) {
+                    const h = (bytes[i + 5] << 8) | bytes[i + 6], w = (bytes[i + 7] << 8) | bytes[i + 8];
+                    return (w > 0 && h > 0) ? { w: w, h: h } : null;
+                }
+                if (len < 2) return null;
+                i += 2 + len;
+            }
+            return null;
+        }
+        return null;
+    }
+    // RGBA pixel data: is any pixel not fully opaque?
+    function hasTransparency(data) {
+        for (let i = 3; i < data.length; i += 4) if (data[i] < 255) return true;
+        return false;
+    }
+    // what the RTF writer reads from an <img> that carries its picture as a data: URL
+    function dataUrlImageSource(el) {
+        const d = parseDataUrl(el.getAttribute('src'));
+        if (!d) return null;
+        let bytes;
+        try { bytes = b64ToBytes(d.b64); } catch (e) { return null; }
+        const size = imageSize(bytes, d.mime);
+        return size ? { mime: d.mime, bytes: bytes, w: size.w, h: size.h } : null;
+    }
+    // File -> {mime, b64, w, h}: scaled to MAX_IMG_SIDE, re-encoded as PNG (kept only if it really has
+    // transparency) or JPEG. Replaceable on window.WordpadRtf.decodeImage (the tests do that).
+    function defaultDecodeImage(file) {
+        return new Promise(function (resolve, reject) {
+            const url = URL.createObjectURL(file);
+            const img = new Image();
+            img.onload = function () {
+                try {
+                    const w = img.naturalWidth, h = img.naturalHeight;
+                    if (!w || !h) throw new Error('empty image');
+                    const k = Math.min(1, MAX_IMG_SIDE / Math.max(w, h));
+                    const cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = cw; canvas.height = ch;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, cw, ch);
+                    let mime = 'image/jpeg';
+                    if (file.type !== 'image/jpeg' && hasTransparency(ctx.getImageData(0, 0, cw, ch).data)) mime = 'image/png';
+                    const m = /^data:(image\/(?:png|jpeg));base64,(.+)$/.exec(canvas.toDataURL(mime, 0.9));
+                    if (!m) throw new Error('could not encode');
+                    resolve({ mime: m[1], b64: m[2], w: cw, h: ch });
+                } catch (e) { reject(e); }
+                URL.revokeObjectURL(url);
+            };
+            img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('could not decode')); };
+            img.src = url;
+        });
+    }
+
+    // =====================================================================
     // RTF writer
     // =====================================================================
     function rtfEscape(text) {
@@ -142,7 +247,11 @@
     const BLOCK_TAGS = new Set(['DIV', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'UL', 'OL', 'BLOCKQUOTE', 'PRE',
         'TABLE', 'TBODY', 'THEAD', 'TFOOT', 'TR', 'TD', 'TH', 'SECTION', 'ARTICLE', 'HEADER', 'FOOTER']);
 
-    function htmlToRtf(root) {
+    function htmlToRtf(root, opts) {
+        // pictures: the caller may resolve an <img> itself (the editor keeps the bytes outside the DOM)
+        const imageSource = (opts && opts.imageSource)
+            ? function (el) { return opts.imageSource(el) || dataUrlImageSource(el); }
+            : dataUrlImageSource;
         const fontTable = [
             { name: DEFAULT_FONT, fam: 'fswiss', charset: 0 },
             { name: 'Symbol', fam: 'fnil', charset: 2 }   // f1 is reserved for list bullets
@@ -214,6 +323,19 @@
             if (ctx.bg) ctl += '\\highlight' + colorNo(ctx.bg);
             const body = rtfEscape(text);
             runs += ctl ? '{' + ctl + ' ' + body + '}' : body;
+            hasContent = true;
+        }
+
+        function addImage(el) {
+            const data = imageSource(el);
+            if (!data) return;
+            if (pendingBreaks) { runs += '\\line '.repeat(pendingBreaks); pendingBreaks = 0; }
+            const wAttr = parseInt(el.getAttribute('width'), 10);
+            const dispW = wAttr > 0 ? wAttr : data.w;                       // size on the page, in px (the aspect ratio is always kept)
+            const dispH = Math.max(1, Math.round(dispW * data.h / data.w));
+            const hex = bytesToHex(data.bytes).replace(/(.{128})/g, '$1\n');
+            runs += '{\\pict' + (data.mime === 'image/png' ? '\\pngblip' : '\\jpegblip') +
+                '\\picw' + data.w + '\\pich' + data.h + '\\picwgoal' + Math.round(dispW * 15) + '\\pichgoal' + Math.round(dispH * 15) + '\n' + hex + '}';
             hasContent = true;
         }
 
@@ -306,6 +428,7 @@
             const tag = node.tagName;
             if (tag === 'BR') { pendingBreaks++; return; }
             if (tag === 'SCRIPT' || tag === 'STYLE') return;
+            if (tag === 'IMG') { addImage(node); return; }
             const c = deriveCtx(node, ctx);
             if (BLOCK_TAGS.has(tag)) walkBlock(node, c, tag);
             else Array.prototype.forEach.call(node.childNodes, function (child) { walk(child, c); });
@@ -336,7 +459,7 @@
     const CP1252_HIGH = [0x20AC, 0x81, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x8D, 0x017D, 0x8F,
         0x90, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x9D, 0x017E, 0x0178];
     const SKIP_DESTS = new Set(['stylesheet', 'info', 'header', 'headerl', 'headerr', 'headerf', 'footer', 'footerl', 'footerr', 'footerf',
-        'pict', 'object', 'listtable', 'listoverridetable', 'revtbl', 'rsidtbl', 'themedata', 'colorschememapping', 'latentstyles',
+        'object', 'listtable', 'listoverridetable', 'revtbl', 'rsidtbl', 'themedata', 'colorschememapping', 'latentstyles',
         'datastore', 'xmlnstbl', 'generator', 'fldinst', 'bkmkstart', 'bkmkend', 'footnote', 'annotation', 'private', 'wgrffmtfilter',
         'nonshppict', 'shpinst', 'shprslt', 'mmathPr', 'defchp', 'defpap', 'pgdsctbl', 'userprops', 'filetbl', 'fchars', 'lchars', 'ftnsep', 'ftnsepc']);
     const SPECIAL_CHARS = {
@@ -362,6 +485,7 @@
         let rgb = { r: null, g: null, b: null };
         let markerBuf = '';
         let groupStart = false;
+        let pict = null, pictHex = '', skippedImages = 0;   // the picture being read, and how many unsupported ones were dropped
 
         function fmtKey() {
             return [state.b, state.i, state.u, state.s, state.sup, state.sub, state.fs, state.f, state.cf, state.hl].join('|');
@@ -376,6 +500,7 @@
         function emit(text) {
             if (!text) return;
             if (state.dest === 'skip' || state.dest === 'colortbl') return;
+            if (state.dest === 'pict') { if (/^[0-9a-fA-F]+$/.test(text)) pictHex += text; return; }
             if (state.dest === 'fonttbl') { fontBuf += text; return; }
             if (state.dest === 'marker') { markerBuf += text; return; }
             addRun(text);
@@ -396,6 +521,19 @@
                 cur.list = { type: 'ol', start: isFinite(num) && num > 0 ? num : 1 };
             }
         }
+        function finishPict() {
+            const p = pict, hex = pictHex;
+            pict = null;
+            pictHex = '';
+            if (!p) return;
+            if ((p.type !== 'image/png' && p.type !== 'image/jpeg') || hex.length < 16 || hex.length > 16000000) { skippedImages++; return; }
+            const bytes = hexToBytes(hex.length % 2 ? hex.slice(0, -1) : hex);
+            const size = imageSize(bytes, p.type);
+            if (!size) { skippedImages++; return; }
+            let wpx = p.wgoal ? p.wgoal / 15 : (p.picw || size.w);   // twips -> px
+            wpx = Math.max(1, Math.round(wpx * (p.sx || 100) / 100));
+            cur.runs.push({ img: { mime: p.type, b64: bytesToB64(bytes), w: wpx, h: Math.max(1, Math.round(wpx * size.h / size.w)) } });
+        }
         function hexChar(code) {
             if (code >= 0x80 && code <= 0x9F) return String.fromCharCode(CP1252_HIGH[code - 0x80]);
             return String.fromCharCode(code);
@@ -406,12 +544,13 @@
 
             if (ch === '{') {
                 stack.push(state);
-                state = Object.assign({}, state);
+                state = Object.assign({}, state, { ignorable: false });
                 groupStart = true;
                 i++;
                 continue;
             }
             if (ch === '}') {
+                if (state.dest === 'pict' && stack.length && stack[stack.length - 1].dest !== 'pict') finishPict();
                 if (state.dest === 'marker' && stack.length && stack[stack.length - 1].dest !== 'marker') finishMarker();
                 if (stack.length) state = stack.pop();
                 groupStart = false;
@@ -442,7 +581,7 @@
 
             if (!/[a-zA-Z]/.test(c)) {
                 i++;
-                if (c === '*') { if (groupStart) state.dest = 'skip'; groupStart = false; continue; }
+                if (c === '*') { if (groupStart) state.ignorable = true; else groupStart = false; continue; }
                 groupStart = false;
                 if (c === '\'') {
                     const hex = src.substr(i, 2);
@@ -474,6 +613,18 @@
 
             if (groupStart) {
                 groupStart = false;
+                if (state.ignorable) {                       // {\* ...}: an ignorable destination
+                    state.ignorable = false;
+                    if (word === 'shppict') continue;        // Word keeps the PNG/JPEG version of a picture in {\*\shppict ...}
+                    state.dest = 'skip';
+                    continue;
+                }
+                if (word === 'pict' && state.dest === null) {   // a \pict inside a skipped destination (Word's \nonshppict fallback) is not a picture
+                    state.dest = 'pict';
+                    pict = { type: null, picw: 0, pich: 0, wgoal: 0, hgoal: 0, sx: 100 };
+                    pictHex = '';
+                    continue;
+                }
                 if (word === 'fonttbl') { state.dest = 'fonttbl'; fontBuf = ''; continue; }
                 if (word === 'colortbl') { state.dest = 'colortbl'; rgb = { r: null, g: null, b: null }; continue; }
                 if (word === 'pntext' || word === 'listtext') { state.dest = 'marker'; markerBuf = ''; continue; }
@@ -485,6 +636,19 @@
                 if (word === 'red') rgb.r = Math.min(255, param || 0);
                 else if (word === 'green') rgb.g = Math.min(255, param || 0);
                 else if (word === 'blue') rgb.b = Math.min(255, param || 0);
+                continue;
+            }
+            if (state.dest === 'pict') {
+                if (pict) {
+                    if (word === 'pngblip') pict.type = 'image/png';
+                    else if (word === 'jpegblip') pict.type = 'image/jpeg';
+                    else if (/^(emfblip|wmetafile|dibitmap|wbitmap|macpict|pmmetafile)$/.test(word)) { if (!pict.type) pict.type = 'unsupported'; }
+                    else if (word === 'picw') pict.picw = param || 0;
+                    else if (word === 'pich') pict.pich = param || 0;
+                    else if (word === 'picwgoal') pict.wgoal = param || 0;
+                    else if (word === 'pichgoal') pict.hgoal = param || 0;
+                    else if (word === 'picscalex') pict.sx = param === null ? 100 : param;
+                }
                 continue;
             }
             if (state.dest === 'skip') continue;
@@ -550,6 +714,15 @@
             return css.join('; ');
         }
         function appendRun(block, r) {
+            if (r.img) {
+                const im = doc.createElement('img');
+                im.setAttribute('src', 'data:' + r.img.mime + ';base64,' + r.img.b64);
+                im.setAttribute('width', String(r.img.w));
+                im.setAttribute('height', String(r.img.h));
+                im.setAttribute('alt', '');
+                block.appendChild(im);
+                return;
+            }
             const css = cssFor(r);
             r.text.split('\n').forEach(function (seg, idx) {
                 if (idx > 0) block.appendChild(doc.createElement('br'));
@@ -595,10 +768,15 @@
             if (!p.runs.length) block.appendChild(doc.createElement('br'));
             else p.runs.forEach(function (r) { appendRun(block, r); });
         });
+        frag.wpSkippedImages = skippedImages;   // pictures that were not PNG/JPEG (the caller tells the user)
         return frag;
     }
 
-    window.WordpadRtf = { htmlToRtf: htmlToRtf, rtfToDom: rtfToDom, rtfEscape: rtfEscape, parseColor: parseColor };
+    window.WordpadRtf = {
+        htmlToRtf: htmlToRtf, rtfToDom: rtfToDom, rtfEscape: rtfEscape, parseColor: parseColor,
+        imageSize: imageSize, hasTransparency: hasTransparency, parseDataUrl: parseDataUrl,
+        bytesToB64: bytesToB64, b64ToBytes: b64ToBytes, decodeImage: defaultDecodeImage
+    };
 
     // =====================================================================
     // Draft sanitiser: the autosaved draft is the editor's own innerHTML.
@@ -623,13 +801,32 @@
         }).filter(Boolean).join('; ');
     }
 
-    function cloneClean(node, target) {
+    function cloneClean(node, target, resolveImg) {
         if (node.nodeType === 3) { target.appendChild(document.createTextNode(node.nodeValue)); return; }
         if (node.nodeType !== 1) return;
         const tag = node.tagName;
         if (DROP_WITH_CONTENT.has(tag)) return;
+        if (tag === 'IMG') {
+            // never a remote URL, never a blob: from another session: the picture is looked up by id,
+            // or must itself be a data: PNG/JPEG
+            const id = node.getAttribute('data-wp-id') || '';
+            const validId = /^[A-Za-z0-9_-]{1,40}$/.test(id);
+            let src = (validId && resolveImg) ? resolveImg(id) : null;
+            if (!src) { const d = parseDataUrl(node.getAttribute('src')); if (d) src = 'data:' + d.mime + ';base64,' + d.b64; }
+            if (!src) return;
+            const im = document.createElement('img');
+            im.setAttribute('src', src);
+            if (validId) im.setAttribute('data-wp-id', id);
+            ['width', 'height'].forEach(function (a) {
+                const v = node.getAttribute(a);
+                if (v && /^\d{1,5}$/.test(v) && parseInt(v, 10) > 0) im.setAttribute(a, v);
+            });
+            im.setAttribute('alt', '');
+            target.appendChild(im);
+            return;
+        }
         if (!ALLOWED_TAGS.has(tag)) {
-            Array.prototype.forEach.call(node.childNodes, function (c) { cloneClean(c, target); });
+            Array.prototype.forEach.call(node.childNodes, function (c) { cloneClean(c, target, resolveImg); });
             return;
         }
         const el = document.createElement(tag.toLowerCase());
@@ -645,14 +842,14 @@
         }
         const align = (node.getAttribute('align') || '').toLowerCase();
         if (/^(left|center|right|justify)$/.test(align)) el.setAttribute('align', align);
-        Array.prototype.forEach.call(node.childNodes, function (c) { cloneClean(c, el); });
+        Array.prototype.forEach.call(node.childNodes, function (c) { cloneClean(c, el, resolveImg); });
         target.appendChild(el);
     }
 
-    function setSanitizedHtml(editor, html) {
+    function setSanitizedHtml(editor, html, resolveImg) {
         editor.textContent = '';
         const parsed = new DOMParser().parseFromString(String(html), 'text/html');
-        Array.prototype.forEach.call(parsed.body.childNodes, function (c) { cloneClean(c, editor); });
+        Array.prototype.forEach.call(parsed.body.childNodes, function (c) { cloneClean(c, editor, resolveImg); });
     }
 
     // =====================================================================
@@ -762,7 +959,7 @@
             // document area
             '.wp-main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;}',
             '.wp-pagearea{flex:1;min-height:0;overflow:auto;background:linear-gradient(#c3cfe1,#dce6f4);padding:0 8px 24px;}',
-            '.wp-sheetwrap{margin:0 auto;width:' + SHEET_PX + 'px;}',
+            '.wp-sheetwrap{margin:0 auto;width:' + SHEET_PX + 'px;position:relative;}',
             '.wp-ruler{position:sticky;top:0;z-index:5;height:20px;background:#f7f7f7;border-bottom:1px solid #c9c9c9;overflow:hidden;margin-bottom:6px;font-size:10px;color:#333;user-select:none;-webkit-user-select:none;}',
             '.wp-ruler i{position:absolute;bottom:0;width:1px;background:#6a6a6a;}',
             '.wp-ruler b{position:absolute;top:2px;font-weight:normal;transform:translateX(-50%);}',
@@ -806,6 +1003,11 @@
             '.wp-find .hd{display:flex;justify-content:space-between;align-items:center;font-weight:600;}',
             '.wp-find .rw{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}',
             '.wp-find .chk{display:flex;align-items:center;gap:4px;}',
+            '.wp-editor img{max-width:100%;height:auto;vertical-align:bottom;}',
+            '.wp-imgbox{position:absolute;z-index:6;border:2px solid #1979ca;pointer-events:none;box-sizing:border-box;}',
+            '.wp-imgbox[hidden]{display:none;}',
+            '.wp-imghandle{position:absolute;right:-8px;bottom:-8px;width:14px;height:14px;background:#1979ca;border:1px solid #fff;cursor:nwse-resize;pointer-events:auto;touch-action:none;}',
+            '.wp-imgbar{position:absolute;left:-2px;top:100%;margin-top:10px;display:flex;flex-wrap:wrap;gap:2px;background:#f5f6f7;border:1px solid #adb0b3;box-shadow:2px 3px 8px rgba(0,0,0,.3);padding:2px;pointer-events:auto;max-width:340px;}',
             '.wp-find .msg{min-height:14px;color:#a31515;font-size:11px;}'
         ].join('\n');
         const st = document.createElement('style');
@@ -1011,6 +1213,7 @@
         function restoreSnapshot(s) {
             clearTimeout(snapTimer);
             snapTimer = null;
+            deselectImage();
             editor.innerHTML = s.html;       // our own earlier serialisation of this very editor
             savedRange = null;
             editor.focus();
@@ -1515,9 +1718,9 @@
                     const text = editor.innerText.replace(/\u00a0/g, ' ').replace(/\r?\n/g, '\r\n');
                     downloadBlob(new Blob(['\uFEFF' + text], { type: 'text/plain;charset=utf-8' }), docName + '.txt');
                 } else {
-                    downloadBlob(new Blob([htmlToRtf(editor)], { type: 'application/rtf' }), docName + '.rtf');
+                    downloadBlob(new Blob([htmlToRtf(editor, { imageSource: exportImageSource })], { type: 'application/rtf' }), docName + '.rtf');
                 }
-                noteEl.textContent = 'Salvato come ' + docName + '.' + ext;
+                noteEl.textContent = 'Salvato come ' + docName + '.' + ext + ((ext === 'txt' && editor.querySelector('img')) ? ' (il testo semplice non contiene le immagini)' : '');
             } catch (e) { showError('WordPad - Salvataggio', 'Non è stato possibile creare il file: ' + e.message); }
         }
         function saveAs() {
@@ -1561,7 +1764,7 @@
                     'ul,ol{margin:0;padding-left:34px}blockquote{margin:0 0 0 40px}</style></head><body></body></html>');
                 d.close();
                 const parsed = new DOMParser().parseFromString(editor.innerHTML, 'text/html');
-                Array.prototype.forEach.call(parsed.body.childNodes, function (c) { cloneClean(c, d.body); });
+                Array.prototype.forEach.call(parsed.body.childNodes, function (c) { cloneClean(c, d.body, imageDataUrl); });
                 setTimeout(function () {
                     try { frame.contentWindow.focus(); frame.contentWindow.print(); }
                     catch (e) { showError('WordPad - Stampa', 'La stampa non è disponibile in questo browser.'); }
@@ -1602,11 +1805,13 @@
                 sendToBin();
                 editor.textContent = '';
                 editor.appendChild(frag);
+                adoptImages();                       // pictures read from the RTF: bytes into the store, short blob: URL in the DOM
                 savedRange = null;
                 docName = safeFileName(file.name); docExt = isRtf ? 'rtf' : 'txt'; docNamed = true;
                 setTitle();
                 commit();
                 noteEl.textContent = 'Aperto: ' + file.name;
+                if (frag.wpSkippedImages) showError('WordPad - Apri', (frag.wpSkippedImages === 1 ? 'Un\'immagine non è stata caricata' : frag.wpSkippedImages + ' immagini non sono state caricate') + ': WordPad legge solo immagini PNG e JPEG dentro i file RTF.');
             };
             reader.readAsArrayBuffer(file);
         }
@@ -1640,6 +1845,213 @@
         mkBtn(qat, ICON.save, 'Salva (Ctrl+S)', saveDoc, { cls: 'small' });
         mkBtn(qat, '↶', 'Annulla (Ctrl+Z)', doUndo, { cls: 'small' });
         mkBtn(qat, '↷', 'Ripeti (Ctrl+Y)', doRedo, { cls: 'small' });
+
+        // ---------- pictures ----------
+        // The picture bytes live in imageStore, NOT in the DOM: the editor only holds a short blob: URL and an id.
+        // That keeps the undo history small (200 snapshots of HTML containing megabytes of base64 would not fit
+        // in memory), and the same store is what the RTF writer, the draft and the print preview read from.
+        const imageStore = new Map();   // id -> { mime, b64, w, h, url }
+        let imgSeq = 0;
+        function registerImage(mime, b64, w, h, wantedId) {
+            let id = (wantedId && /^[A-Za-z0-9_-]{1,40}$/.test(wantedId) && !imageStore.has(wantedId)) ? wantedId : '';
+            if (!id) { imgSeq++; id = 'i' + Date.now().toString(36) + imgSeq; }
+            const url = URL.createObjectURL(new Blob([b64ToBytes(b64)], { type: mime }));
+            imageStore.set(id, { mime: mime, b64: b64, w: w, h: h, url: url });
+            return id;
+        }
+        // Any <img> carrying a data: picture (just opened from an RTF, restored from the draft...) hands its bytes
+        // to the store and keeps only a short blob: URL. An <img> we know nothing about is dropped: foreign
+        // pictures (remote URLs, other sessions' blob: URLs) must never survive in the document.
+        function adoptImages() {
+            Array.prototype.forEach.call(editor.querySelectorAll('img'), function (im) {
+                const d = parseDataUrl(im.getAttribute('src'));
+                if (d) {
+                    let bytes = null;
+                    try { bytes = b64ToBytes(d.b64); } catch (e) { bytes = null; }
+                    const size = bytes ? imageSize(bytes, d.mime) : null;
+                    if (!size) { im.parentNode.removeChild(im); return; }
+                    const id = registerImage(d.mime, d.b64, size.w, size.h, im.getAttribute('data-wp-id'));
+                    let wpx = parseInt(im.getAttribute('width'), 10);
+                    if (!(wpx > 0)) wpx = Math.min(size.w, TEXT_WIDTH_PX);
+                    im.setAttribute('data-wp-id', id);
+                    im.setAttribute('src', imageStore.get(id).url);
+                    im.setAttribute('width', String(wpx));
+                    im.setAttribute('height', String(Math.max(1, Math.round(wpx * size.h / size.w))));
+                } else if (!imageStore.has(im.getAttribute('data-wp-id') || '')) {
+                    im.parentNode.removeChild(im);
+                }
+            });
+        }
+        function exportImageSource(imEl) {
+            const e = imageStore.get(imEl.getAttribute('data-wp-id') || '');
+            return e ? { mime: e.mime, bytes: b64ToBytes(e.b64), w: e.w, h: e.h } : null;
+        }
+        function imageDataUrl(id) {
+            const e = imageStore.get(id);
+            return e ? 'data:' + e.mime + ';base64,' + e.b64 : null;
+        }
+
+        // --- the selected picture: outline, resize handle and a small size bar ---
+        let selImg = null;
+        let imgDrag = null;
+        const imgBox = el('div', 'wp-imgbox');
+        imgBox.hidden = true;
+        const imgHandle = el('div', 'wp-imghandle');
+        imgHandle.title = 'Trascina per ridimensionare';
+        const imgBar = el('div', 'wp-imgbar');
+        imgBox.appendChild(imgHandle);
+        imgBox.appendChild(imgBar);
+        sheetWrap.appendChild(imgBox);
+
+        function positionImgBox() {
+            if (!selImg || !selImg.isConnected) { imgBox.hidden = true; return; }
+            const a = selImg.getBoundingClientRect();
+            const b = sheetWrap.getBoundingClientRect();
+            const z = (typeof zoom === 'number' && zoom > 0) ? zoom / 100 : 1;   // both rects are in zoomed pixels, the box lives inside the zoomed sheet
+            imgBox.style.left = ((a.left - b.left) / z) + 'px';
+            imgBox.style.top = ((a.top - b.top) / z) + 'px';
+            imgBox.style.width = (a.width / z) + 'px';
+            imgBox.style.height = (a.height / z) + 'px';
+            imgBox.hidden = false;
+        }
+        function selectImage(im) {
+            if (!im || !im.isConnected) return;
+            selImg = im;
+            const r = document.createRange();           // also select it for real, so alignment buttons / Delete act on it
+            r.selectNode(im);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(r);
+            saveSelection();
+            positionImgBox();
+        }
+        function deselectImage() { selImg = null; imgDrag = null; imgBox.hidden = true; }
+        function rangeIsImage(im, r) {
+            const p = im.parentNode;
+            return r.startContainer === p && r.endContainer === p && r.endOffset === r.startOffset + 1 && p.childNodes[r.startOffset] === im;
+        }
+        function setImgWidth(wpx) {
+            if (!selImg) return;
+            const e = imageStore.get(selImg.getAttribute('data-wp-id') || '');
+            const ratio = e ? e.h / e.w : ((selImg.height || 1) / (selImg.width || 1));
+            wpx = Math.max(16, Math.min(TEXT_WIDTH_PX, Math.round(wpx)));   // never wider than the text area, or Word would clip it
+            selImg.setAttribute('width', String(wpx));
+            selImg.setAttribute('height', String(Math.max(1, Math.round(wpx * ratio))));
+            positionImgBox();
+        }
+        function removeSelectedImage() {
+            if (!selImg) return;
+            beginEdit();
+            const im = selImg, p = im.parentNode;
+            const idx = Array.prototype.indexOf.call(p.childNodes, im);
+            deselectImage();
+            p.removeChild(im);
+            try {                                         // leave the caret where the picture was
+                const r = document.createRange();
+                r.setStart(p, Math.min(idx, p.childNodes.length));
+                r.collapse(true);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(r);
+                saveSelection();
+            } catch (e) { /* cosmetic */ }
+            commit();
+        }
+        [['25%', 0.25], ['50%', 0.5], ['75%', 0.75], ['100%', 1]].forEach(function (p) {
+            mkBtn(imgBar, p[0], 'Larghezza ' + p[0] + ' della pagina', function () { beginEdit(); setImgWidth(TEXT_WIDTH_PX * p[1]); commit(); }, { cls: 'small' });
+        });
+        mkBtn(imgBar, 'Originale', 'Dimensione originale (al massimo la larghezza della pagina)', function () {
+            if (!selImg) return;
+            const e = imageStore.get(selImg.getAttribute('data-wp-id') || '');
+            beginEdit(); setImgWidth(Math.min(e ? e.w : TEXT_WIDTH_PX, TEXT_WIDTH_PX)); commit();
+        }, { cls: 'small' });
+        mkBtn(imgBar, '🗑', 'Elimina immagine', removeSelectedImage, { cls: 'small' });
+
+        imgHandle.addEventListener('pointerdown', function (e) {
+            if (!selImg) return;
+            e.preventDefault();
+            e.stopPropagation();
+            beginEdit();
+            imgDrag = { x: e.clientX, w: parseInt(selImg.getAttribute('width'), 10) || selImg.width || 100 };
+            try { imgHandle.setPointerCapture(e.pointerId); } catch (err) { /* not essential */ }
+        });
+        imgHandle.addEventListener('pointermove', function (e) {
+            if (!imgDrag || !selImg) return;
+            const z = (typeof zoom === 'number' && zoom > 0) ? zoom / 100 : 1;
+            setImgWidth(imgDrag.w + (e.clientX - imgDrag.x) / z);
+        });
+        function endImgDrag() { if (!imgDrag) return; imgDrag = null; commit(); }
+        imgHandle.addEventListener('pointerup', endImgDrag);
+        imgHandle.addEventListener('pointercancel', endImgDrag);
+
+        // --- inserting a picture: button, paste, drag & drop ---
+        const imgInput = el('input');
+        imgInput.type = 'file';
+        imgInput.accept = 'image/png,image/jpeg,image/gif,image/webp,image/bmp';
+        imgInput.style.display = 'none';
+        root.appendChild(imgInput);
+        imgInput.addEventListener('change', function () {
+            const f = imgInput.files && imgInput.files[0];
+            imgInput.value = '';
+            insertImageFile(f);
+        });
+        function placeImage(d) {
+            if (selImg && selImg.isConnected) {          // a picture is selected: insert AFTER it, never over it
+                const r = document.createRange();
+                r.setStartAfter(selImg);
+                r.collapse(true);
+                const sel0 = window.getSelection();
+                sel0.removeAllRanges();
+                sel0.addRange(r);
+                saveSelection();
+                deselectImage();
+            }
+            const id = registerImage(d.mime, d.b64, d.w, d.h);
+            const e = imageStore.get(id);
+            const dw = Math.min(d.w, TEXT_WIDTH_PX);
+            const dh = Math.max(1, Math.round(d.h * dw / d.w));
+            exec('insertHTML', '<img data-wp-id="' + id + '" src="' + e.url + '" width="' + dw + '" height="' + dh + '" alt="">');
+            let im = editor.querySelector('img[data-wp-id="' + id + '"]');
+            if (!im) {                                   // the browser refused insertHTML: put the picture in by hand
+                beginEdit();
+                restoreSelection();
+                im = document.createElement('img');
+                im.setAttribute('data-wp-id', id);
+                im.setAttribute('src', e.url);
+                im.setAttribute('width', String(dw));
+                im.setAttribute('height', String(dh));
+                im.setAttribute('alt', '');
+                const sel = window.getSelection();
+                if (sel && sel.rangeCount) {
+                    const r = sel.getRangeAt(0);
+                    r.deleteContents();
+                    r.insertNode(im);
+                    r.setStartAfter(im);
+                    r.collapse(true);
+                    sel.removeAllRanges();
+                    sel.addRange(r);
+                } else editor.appendChild(im);
+                saveSelection();
+                commit();
+            }
+            selectImage(im);
+        }
+        function insertImageFile(file) {
+            if (!file) return;
+            if (!/^image\/(png|jpeg|gif|webp|bmp)$/.test(file.type)) {
+                showError('WordPad - Immagine', 'Formato non supportato. Usa PNG, JPEG, GIF, WebP o BMP.');
+                return;
+            }
+            if (file.size > MAX_IMG_BYTES) { showError('WordPad - Immagine', 'L\'immagine è troppo grande (massimo 12 MB).'); return; }
+            noteEl.textContent = 'Inserisco l\'immagine…';
+            window.WordpadRtf.decodeImage(file).then(function (d) {
+                placeImage(d);
+                noteEl.textContent = file.type === 'image/gif' ? 'GIF animata: è stato inserito solo il primo fotogramma' : '';
+            }, function () {
+                noteEl.textContent = '';
+                showError('WordPad - Immagine', 'Non è stato possibile leggere questa immagine.');
+            });
+        }
 
         // ---------- HOME: Appunti ----------
         const gClip = group(homeRibbon, 'Appunti');
@@ -1780,6 +2192,7 @@
 
         // ---------- HOME: Inserisci ----------
         const gIns = group(homeRibbon, 'Inserisci');
+        mkBtn(gIns, '<span class="wp-bico">🖼</span><span>Immagine</span>', 'Inserisci immagine', function () { imgInput.click(); }, { cls: 'big' });
         mkBtn(gIns, '<span class="wp-bico">🕒</span><span>Data e ora</span>', 'Inserisci data e ora', function (e, b) {
             showPop(b, function (pop) {
                 const d = new Date();
@@ -1835,6 +2248,7 @@
             const eff = (pageArea.clientWidth - 16) / (zoom / 100);
             // jsdom / hidden windows report 0: keep the wide layout then
             root.classList.toggle('wp-narrow', eff > 0 && eff < NARROW_BELOW_PX);
+            positionImgBox();
         }
         function setZoom(z) {
             zoom = Math.max(20, Math.min(300, Math.round(z / 10) * 10));
@@ -2060,6 +2474,7 @@
             const sel = window.getSelection();
             if (!sel || !sel.rangeCount || !editor.contains(sel.anchorNode)) return;
             saveSelection();
+            if (selImg && !rangeIsImage(selImg, sel.getRangeAt(0))) deselectImage();   // the selection moved away from the picture
             if (stateQueued) return;
             stateQueued = true;
             requestAnimationFrame(function () { stateQueued = false; updateState(); });
@@ -2074,15 +2489,38 @@
             countsEl.textContent = 'Parole: ' + words + '   Caratteri: ' + t.replace(/\n/g, '').length;
         }
         let saveTimer = null;
+        function hasContent() { return hasText() || !!editor.querySelector('img'); }
+        // the draft HTML never carries picture bytes (nor the blob: URLs, which die with the page): only ids
+        function draftHtml() {
+            const c = editor.cloneNode(true);
+            Array.prototype.forEach.call(c.querySelectorAll('img'), function (im) { im.removeAttribute('src'); });
+            return c.innerHTML;
+        }
         function saveDraftNow() {
             clearTimeout(saveTimer);
             saveTimer = null;
             try {
-                if (hasText()) {
-                    localStorage.setItem(DRAFT_KEY, editor.innerHTML);
-                    noteEl.textContent = 'Bozza salvata su questo dispositivo';
+                if (hasContent()) {
+                    let note = 'Bozza salvata su questo dispositivo';
+                    const ids = [];
+                    Array.prototype.forEach.call(editor.querySelectorAll('img[data-wp-id]'), function (im) {
+                        const id = im.getAttribute('data-wp-id');
+                        if (ids.indexOf(id) < 0) ids.push(id);
+                    });
+                    if (ids.length) {
+                        const map = {};
+                        ids.forEach(function (id) { const u = imageDataUrl(id); if (u) map[id] = u; });
+                        try { localStorage.setItem(IMG_KEY, JSON.stringify(map)); }
+                        catch (e) {                      // pictures too big for the browser's storage quota: keep the text at least
+                            try { localStorage.removeItem(IMG_KEY); } catch (e2) { /* ignore */ }
+                            note = '⚠ Bozza salvata senza immagini (troppo grandi per questo dispositivo)';
+                        }
+                    } else localStorage.removeItem(IMG_KEY);
+                    localStorage.setItem(DRAFT_KEY, draftHtml());
+                    noteEl.textContent = note;
                 } else {
-                    localStorage.removeItem(DRAFT_KEY); // nothing worth keeping
+                    localStorage.removeItem(DRAFT_KEY);  // nothing worth keeping
+                    localStorage.removeItem(IMG_KEY);
                     noteEl.textContent = '';
                 }
             } catch (e) {
@@ -2095,7 +2533,12 @@
             clearTimeout(saveTimer);
             saveTimer = setTimeout(saveDraftNow, 700);
         }
-        editor.addEventListener('input', function () { afterEdit(); if (!composing) scheduleSnapshot(); });
+        editor.addEventListener('input', function () { if (selImg) deselectImage(); afterEdit(); if (!composing) scheduleSnapshot(); });
+        editor.addEventListener('click', function (e) {
+            const t = e.target;
+            if (t && t.tagName === 'IMG' && imageStore.has(t.getAttribute('data-wp-id') || '')) selectImage(t);
+            else if (selImg) deselectImage();
+        });
         editor.addEventListener('compositionstart', function () { composing = true; });
         editor.addEventListener('compositionend', function () { composing = false; scheduleSnapshot(); });
         // menu / IME / spell-check "undo", "redo" and "bold" arrive as beforeinput events: route them to our own code
@@ -2111,6 +2554,7 @@
 
         // ---------- editor behaviour ----------
         try { document.execCommand('defaultParagraphSeparator', false, 'div'); } catch (e) { /* ignore */ }
+        try { document.execCommand('enableObjectResizing', false, false); } catch (e) { /* ignore */ }   // Firefox's own picture handles would fight ours
 
         editor.addEventListener('keydown', function (e) {
             const mod = (e.ctrlKey || e.metaKey) && !e.altKey;
@@ -2144,6 +2588,11 @@
         editor.addEventListener('paste', function (e) {
             e.preventDefault();
             const cd = e.clipboardData || window.clipboardData;
+            // a pasted picture (e.g. a screenshot) becomes a picture; anything else is pasted as plain text
+            const items = (cd && cd.items) ? Array.prototype.slice.call(cd.items) : [];
+            const imgItem = items.filter(function (it) { return it.kind === 'file' && /^image\//.test(it.type); })[0];
+            const f = imgItem ? imgItem.getAsFile() : null;
+            if (f) { insertImageFile(f); return; }
             insertPlainText(cd ? cd.getData('text/plain') : '');
         });
         // dropping a file on the page would otherwise navigate away from the desktop
@@ -2151,7 +2600,8 @@
         editor.addEventListener('drop', function (e) {
             if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
                 e.preventDefault();
-                openFile(e.dataTransfer.files[0]);
+                const f = e.dataTransfer.files[0];
+                if (/^image\//.test(f.type)) insertImageFile(f); else openFile(f);
             }
         });
         // clicking the blue-grey area around the sheet puts the caret in the document
@@ -2165,7 +2615,16 @@
         // ---------- restore the draft, if any ----------
         try {
             const draft = localStorage.getItem(DRAFT_KEY);
-            if (draft) setSanitizedHtml(editor, draft);
+            if (draft) {
+                let saved = {};
+                try { const parsed = JSON.parse(localStorage.getItem(IMG_KEY) || '{}'); if (parsed && typeof parsed === 'object') saved = parsed; } catch (e) { saved = {}; }
+                setSanitizedHtml(editor, draft, function (id) {
+                    const v = Object.prototype.hasOwnProperty.call(saved, id) ? saved[id] : null;
+                    return (typeof v === 'string' && parseDataUrl(v)) ? v : null;
+                });
+                adoptImages();
+                if (editor.querySelectorAll('img').length < (draft.match(/<img\b/gi) || []).length) noteEl.textContent = 'Alcune immagini della bozza non erano state salvate';
+            }
         } catch (e) { /* storage unavailable - start empty */ }
         updateCounts();
         setTitle();
@@ -2179,6 +2638,7 @@
                 if (resizeObs) resizeObs.disconnect(); else window.removeEventListener('resize', onWinResize);
                 clearTimeout(snapTimer);
                 saveDraftNow(); // don't lose the last <700ms of typing
+                imageStore.forEach(function (e) { URL.revokeObjectURL(e.url); });
             });
         }
     };
