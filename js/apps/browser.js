@@ -77,19 +77,19 @@
         const forwardBtn = navBtn('▶', 'Forward');
         const reloadBtn = navBtn('⟳', 'Reload');
 
-        const urlInput = document.createElement('text');
-        urlInput.type = '';
+        const urlInput = document.createElement('input');
+        urlInput.type = 'text';
         urlInput.className = 'browser-url';
         urlInput.value = '';
-        urlInput.placeholder = '';
+        urlInput.placeholder = 'Cerca o digita un indirizzo';
         urlInput.style.flex = '1';
         urlInput.style.padding = '4px 8px';
         urlInput.style.border = '1px solid #C0C0C0';
         urlInput.style.borderRadius = '15px';
         urlInput.style.fontSize = '12px';
 
-        const goBtn = document.createElement('static');
-        goBtn.textContent = 'X';
+        const goBtn = document.createElement('button');
+        goBtn.textContent = 'Vai';
         goBtn.style.padding = '4px 12px';
         goBtn.style.background = '#0078D7';
         goBtn.style.color = '#fff';
@@ -132,6 +132,8 @@
         toolbar.appendChild(backBtn);
         toolbar.appendChild(forwardBtn);
         toolbar.appendChild(reloadBtn);
+        // Sveglia proxy e SearXNG (Render) appena si inizia a scrivere
+        if (window.warmOnType) window.warmOnType(urlInput, () => [PROXY_URL, SEARCH_ENGINE_INSTANCES[0]]);
         toolbar.appendChild(urlInput);
         toolbar.appendChild(starBtn);
         toolbar.appendChild(goBtn);
@@ -222,12 +224,12 @@
 
             const searchRow = document.createElement('div');
             searchRow.style.cssText = 'display:flex; gap:5px;';
-            const searchInput = document.createElement('static');
+            const searchInput = document.createElement('input');
             searchInput.type = 'text';
-            searchInput.placeholder = 'DISABILITATO';
+            searchInput.placeholder = 'Cerca nel web';
             searchInput.style.cssText = ' width:300px; padding:8px 12px; border:1px solid #C0C0C0; border-radius:15px; font-size:14px;';
-            const searchBtn = document.createElement('static');
-            searchBtn.textContent = 'Disabilitato';
+            const searchBtn = document.createElement('button');
+            searchBtn.textContent = 'Cerca';
             searchBtn.style.cssText = 'padding:8px 16px; background:#0078D7; color:#fff; border:none; border-radius:15px; cursor:pointer;';
             function doSearch() {
                 const query = searchInput.value;
@@ -243,7 +245,7 @@
             notice.style.cssText = !PROXY_URL ? 'margin-top:10px; font-size:12px; color:#a00;' : 'margin-top:10px; font-size:13px; color:#666;';
             notice.textContent = !PROXY_URL
                 ? 'No proxy configured - pages will open in a new tab instead of inside the browser.'
-                : 'NOTA: il motore di ricerca del browser è sotto manutanzione azioni di ricerca non funzioneranno  ';
+                : 'La prima ricerca può essere lenta: il motore di ricerca si risveglia.';
             page.appendChild(notice);
 
             function renderSiteList(title, items, opts) {

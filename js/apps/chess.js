@@ -82,6 +82,7 @@
         createRoomBtn.onmousedown = () => { createRoomBtn.style.border = '2px inset #c0c0c0'; };
         createRoomBtn.onmouseup = () => { createRoomBtn.style.border = '2px outset #c0c0c0'; };
         createDiv.appendChild(createLabel);
+        if (window.warmOnType) window.warmOnType(createUsernameInput, () => window.CHESS_WS_URL);
         createDiv.appendChild(createUsernameInput);
         createDiv.appendChild(createRoomBtn);
 
@@ -93,6 +94,7 @@
         joinLabel.style.cssText = 'font-weight:bold;margin-bottom:4px;font-size:12px;font-family:"Segoe UI",sans-serif;';
         const joinUsernameInput = document.createElement('input');
         joinUsernameInput.placeholder = 'Enter username';
+        if (window.warmOnType) window.warmOnType(joinUsernameInput, () => window.CHESS_WS_URL);
         joinUsernameInput.style.cssText = 'padding:3px 6px;font-size:12px;font-family:"Segoe UI",sans-serif;border:2px inset #c0c0c0;background:#fff;margin-bottom:4px;max-width:150px;';
         const roomCodeInput = document.createElement('input');
         roomCodeInput.placeholder = 'Enter room code';

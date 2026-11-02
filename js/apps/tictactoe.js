@@ -47,6 +47,7 @@
         createRoomBtn.onmouseup = () => { createRoomBtn.style.border = '2px outset #c0c0c0'; };
         createDiv.appendChild(createLabel);
         createDiv.appendChild(createUsernameInput);
+        if (window.warmOnType) window.warmOnType(createUsernameInput, () => window.TIC_TAC_TOE_WS_URL);
         createDiv.appendChild(createRoomBtn);
 
         // Room joining section
@@ -57,6 +58,7 @@
         joinLabel.style.cssText = 'font-weight:bold;margin-bottom:4px;';
         const userInput = document.createElement('input');
         userInput.placeholder = 'Enter username';
+        if (window.warmOnType) window.warmOnType(userInput, () => window.TIC_TAC_TOE_WS_URL);
         userInput.style.cssText = 'padding:3px 6px;font-size:12px;font-family:"Segoe UI",sans-serif;border:2px inset #c0c0c0;background:#fff;margin-bottom:4px;max-width:150px;';
         const joinRoomCodeInput = document.createElement('input');
         joinRoomCodeInput.placeholder = 'Enter room code';

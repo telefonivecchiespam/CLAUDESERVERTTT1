@@ -51,6 +51,7 @@
         const userField = document.createElement('input');
         userField.placeholder = 'Username';
         userField.style.cssText = inputStyle() + 'width:180px;';
+        if (window.warmOnType) window.warmOnType(userField, () => window.CHAT_WS_URL);
         const passField = document.createElement('input');
         passField.placeholder = 'Password (optional)';
         passField.type = 'password';

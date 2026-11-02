@@ -71,7 +71,9 @@ window.initPrivacy = function(container) {
 
             <h3 style="font-size:13px; margin:14px 0 4px;">🎮 Tris, Scacchi</h3>
             <p>Solo il nome scelto per la partita viene inviato al server di gioco, e solo per la durata
-            della partita stessa (stanza in memoria, non salvata su disco).</p>
+            della partita stessa (stanza in memoria, non salvata su disco).
+            Appena inizi a scrivere il nome (o un indirizzo nel Browser) il sito invia una richiesta vuota
+            al server interessato per "svegliarlo" (i server gratuiti si addormentano): nessun dato tuo viene inviato.</p>
 
             <h3 style="font-size:13px; margin:14px 0 4px;">🔎 Ricerca nel Browser</h3>
             <p>Le ricerche effettuate dall'app Browser passano attraverso una nostra istanza SearXNG
