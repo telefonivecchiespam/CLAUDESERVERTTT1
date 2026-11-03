@@ -227,6 +227,7 @@
             const searchInput = document.createElement('input');
             searchInput.type = 'text';
             searchInput.placeholder = 'Cerca nel web';
+            if (window.warmOnType) window.warmOnType(searchInput, () => [PROXY_URL, SEARCH_ENGINE_INSTANCES[0]]);
             searchInput.style.cssText = ' width:300px; padding:8px 12px; border:1px solid #C0C0C0; border-radius:15px; font-size:14px;';
             const searchBtn = document.createElement('button');
             searchBtn.textContent = 'Cerca';
