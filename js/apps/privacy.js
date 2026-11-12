@@ -59,7 +59,9 @@ window.initPrivacy = function(container) {
             <h3 style="font-size:13px; margin:14px 0 4px;">🎵 Media Player</h3>
             <p>I file audio/video che apri restano solo nel tuo browser (Object URL locale): non vengono
             mai caricati su nessun server, nemmeno i nostri. La playlist non viene salvata: va ricreata
-            ad ogni apertura dell'app.</p>
+            ad ogni apertura dell'app. Se apri un link, il video viene richiesto direttamente al sito che lo ospita
+            (vede il tuo indirizzo IP, come aprendo il link nel browser). I link di YouTube usano il lettore
+            incorporato di YouTube, che viene caricato da Google solo quando aggiungi un link YouTube.</p>
 
             <h3 style="font-size:13px; margin:14px 0 4px;">📃 WordPad</h3>
             <p>I documenti che scrivi, apri o salvi (.rtf, .txt) vengono elaborati solo nel tuo browser:
