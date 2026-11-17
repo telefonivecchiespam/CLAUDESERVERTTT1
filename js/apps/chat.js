@@ -753,13 +753,13 @@
             msgArea.scrollTop = msgArea.scrollHeight;
 
             const inputRow = document.createElement('div');
-            inputRow.style.cssText = 'display:flex;border-top:1px solid #808080;padding:6px;gap:6px;flex-shrink:0;';
+            inputRow.style.cssText = 'display:flex;border-top:1px solid #808080;padding:6px;gap:6px;flex-shrink:0;box-sizing:border-box;width:100%;';
             const msgInput = document.createElement('input');
             msgInput.placeholder = 'Type a message...';
-            msgInput.style.cssText = inputStyle() + 'flex:1;';
+            msgInput.style.cssText = inputStyle() + 'flex:1;min-width:0;width:0;';
             const sendBtn = document.createElement('button');
             sendBtn.textContent = 'Send';
-            sendBtn.style.cssText = btnStyle();
+            sendBtn.style.cssText = btnStyle() + 'flex-shrink:0;';
             wireBtnPress(sendBtn);
 
             function doSend() {
