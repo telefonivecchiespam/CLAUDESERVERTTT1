@@ -27,7 +27,9 @@ window.initPrivacy = function(container) {
             La password, se impostata, è salvata sul server già trasformata con hash SHA-256, mai in
             chiaro e mai nel tuo browser. Se non imposti una password, chiunque può accedere con quel
             nome utente: usalo consapevolmente. I messaggi restano sul server della chat (ultimi 200
-            per canale/DM) finché non vengono sovrascritti da messaggi più recenti.</p>
+            per canale/DM) finché non vengono sovrascritti da messaggi più recenti, o eliminati: chi li ha scritti
+            (o il proprietario del server) può modificarli o cancellarli, e chiunque nella conversazione può aggiungere
+            reazioni (emoji) con il proprio nome utente.</p>
 
             <h3 style="font-size:13px; margin:14px 0 4px;">🌐 Browser (reverse-proxy)</h3>
             <p>Quando navighi un sito tramite l'app Browser, la richiesta passa dal nostro server proxy,

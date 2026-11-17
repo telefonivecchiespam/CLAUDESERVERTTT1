@@ -23,6 +23,30 @@
 
         let ws = null;
         let myUsername = null;
+        // message actions (react / edit / delete) UI state
+        const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉'];
+        let msgAreaEl = null, openMenuId = null, editingId = null, pendingRefresh = false, pickerOpenId = null;
+        let allEmojiCache = null;
+        // Every emoji with its own picture (no skin-tone / family variants): built from Unicode ranges
+        function allEmojis() {
+            if (allEmojiCache) return allEmojiCache;
+            const out = [], re = /\p{Emoji_Presentation}/u;
+            [[0x1F300, 0x1FAFF], [0x2600, 0x27BF], [0x2B00, 0x2BFF]].forEach(r => {
+                for (let c = r[0]; c <= r[1]; c++) {
+                    if (c >= 0x1F3FB && c <= 0x1F3FF) continue; // skin-tone modifiers
+                    const ch = String.fromCodePoint(c);
+                    if (re.test(ch)) out.push(ch);
+                }
+            });
+            return (allEmojiCache = out);
+        }
+        // first emoji-looking character group of what the user typed/pasted
+        function firstGrapheme(str) {
+            str = (str || '').trim();
+            if (!str) return '';
+            if (window.Intl && Intl.Segmenter) { const it = new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(str)[Symbol.iterator]().next(); return it.done ? '' : it.value.segment; }
+            return Array.from(str)[0] || '';
+        }
         let servers = {};       // id -> server object {id,name,inviteCode,members,channels:[{id,name,type,messages}]}
         let dms = {};           // withUsername -> {withUsername, messages}
         let onlineUsers = [];
@@ -697,6 +721,7 @@
 
         function renderMain() {
             mainCol.innerHTML = '';
+            openMenuId = null; editingId = null; pendingRefresh = false; pickerOpenId = null;
 
             if (!activeView) {
                 const placeholder = document.createElement('div');
@@ -722,6 +747,7 @@
 
             const msgArea = document.createElement('div');
             msgArea.style.cssText = 'flex:1;overflow-y:auto;padding:8px;';
+            msgAreaEl = msgArea;
             currentMessages().forEach(m => msgArea.appendChild(renderMessageRow(m)));
             mainCol.appendChild(msgArea);
             msgArea.scrollTop = msgArea.scrollHeight;
@@ -833,17 +859,170 @@
             mainCol.appendChild(body);
         }
 
+        function currentTarget() {
+            return activeView.type === 'dm'
+                ? { type: 'dm', toUsername: activeView.withUsername }
+                : { type: 'channel', serverId: activeView.serverId, channelId: activeView.channelId };
+        }
+        function sendAction(type, extra) {
+            if (!activeView || !ws || ws.readyState !== 1) return;
+            ws.send(JSON.stringify(Object.assign({ type, target: currentTarget() }, extra)));
+        }
+        function isServerOwner() {
+            return activeView && activeView.type === 'channel' && servers[activeView.serverId] &&
+                servers[activeView.serverId].ownerUsername === myUsername;
+        }
+        // Rebuilds only the message list (keeps the typed text in the input box)
+        function refreshMessages(forceBottom) {
+            if (!msgAreaEl || !activeView) return;
+            if (editingId) { pendingRefresh = true; return; }
+            const nearBottom = msgAreaEl.scrollHeight - msgAreaEl.scrollTop - msgAreaEl.clientHeight < 40;
+            const top = msgAreaEl.scrollTop;
+            msgAreaEl.innerHTML = '';
+            currentMessages().forEach(m => msgAreaEl.appendChild(renderMessageRow(m)));
+            msgAreaEl.scrollTop = (forceBottom || nearBottom) ? msgAreaEl.scrollHeight : top;
+        }
+        function smallBtn(label, title) {
+            const b = document.createElement('button');
+            b.textContent = label;
+            if (title) b.title = title;
+            b.style.cssText = btnStyle() + 'padding:1px 6px;font-size:12px;min-width:0;margin-right:4px;';
+            return b;
+        }
+
         function renderMessageRow(m) {
             const row = document.createElement('div');
             row.style.cssText = 'margin-bottom:6px;';
             const meta = document.createElement('span');
-            meta.innerHTML = '<b>' + escapeHtml(m.from) + '</b> <span style="color:#888;font-size:10px;">' + formatTime(m.time) + '</span>';
+            meta.innerHTML = '<b>' + escapeHtml(m.from) + '</b> <span style="color:#888;font-size:10px;">' + formatTime(m.time) +
+                (m.edited ? ' (modificato)' : '') + '</span> ';
+            const menuBtn = document.createElement('span');
+            menuBtn.textContent = '⋯';
+            menuBtn.title = 'Reagisci, modifica, elimina';
+            menuBtn.style.cssText = 'cursor:pointer;color:#666;padding:0 6px;font-weight:bold;user-select:none;';
+            menuBtn.addEventListener('click', () => { openMenuId = (openMenuId === m.id) ? null : m.id; refreshMessages(); });
+            meta.appendChild(menuBtn);
+            row.appendChild(meta);
+
+            if (editingId === m.id) {
+                const ta = document.createElement('textarea');
+                ta.value = m.content;
+                ta.maxLength = 2000;
+                ta.rows = 2;
+                ta.style.cssText = inputStyle() + 'width:100%;box-sizing:border-box;resize:vertical;';
+                const save = smallBtn('Salva');
+                const cancel = smallBtn('Annulla');
+                const finish = () => { editingId = null; pendingRefresh = false; refreshMessages(); };
+                save.addEventListener('click', () => {
+                    const text = ta.value.trim();
+                    if (text && text !== m.content) sendAction('edit_message', { messageId: m.id, content: text });
+                    finish();
+                });
+                cancel.addEventListener('click', finish);
+                ta.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); save.click(); }
+                    else if (e.key === 'Escape') finish();
+                });
+                row.appendChild(ta);
+                const bar = document.createElement('div');
+                bar.style.cssText = 'margin-top:3px;';
+                bar.appendChild(save); bar.appendChild(cancel);
+                row.appendChild(bar);
+                setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
+                return row;
+            }
+
             const content = document.createElement('div');
             content.textContent = m.content;
             content.style.cssText = 'white-space:pre-wrap;word-break:break-word;';
-            row.appendChild(meta);
             row.appendChild(content);
+
+            // reaction chips (click to add/remove your own)
+            const reactions = m.reactions || {};
+            const emojis = Object.keys(reactions);
+            if (emojis.length) {
+                const chips = document.createElement('div');
+                chips.style.cssText = 'margin-top:2px;';
+                emojis.forEach(em => {
+                    const users = reactions[em];
+                    const mine = users.indexOf(myUsername) >= 0;
+                    const chip = document.createElement('span');
+                    chip.textContent = em + ' ' + users.length;
+                    chip.title = users.join(', ');
+                    chip.style.cssText = 'display:inline-block;cursor:pointer;margin-right:4px;padding:0 6px;border:1px solid ' +
+                        (mine ? '#0a246a;background:#c8d4f0;' : '#808080;background:#f0f0f0;') + 'border-radius:8px;font-size:12px;user-select:none;';
+                    chip.addEventListener('click', () => sendAction('react_message', { messageId: m.id, emoji: em }));
+                    chips.appendChild(chip);
+                });
+                row.appendChild(chips);
+            }
+
+            if (openMenuId === m.id) {
+                const menu = document.createElement('div');
+                menu.style.cssText = 'margin-top:3px;padding:3px;border:1px solid #808080;background:#e8e4dc;display:inline-block;';
+                REACTION_EMOJIS.forEach(em => {
+                    const b = smallBtn(em);
+                    b.addEventListener('click', () => { openMenuId = null; sendAction('react_message', { messageId: m.id, emoji: em }); refreshMessages(); });
+                    menu.appendChild(b);
+                });
+                const more = smallBtn('➕', 'Altre emoji');
+                more.addEventListener('click', () => { pickerOpenId = (pickerOpenId === m.id) ? null : m.id; refreshMessages(); });
+                menu.appendChild(more);
+                if (m.from === myUsername) {
+                    const ed = smallBtn('✏️ Modifica');
+                    ed.addEventListener('click', () => { openMenuId = null; editingId = m.id; pendingRefresh = false; renderEditing(); });
+                    menu.appendChild(ed);
+                }
+                if (m.from === myUsername || isServerOwner()) {
+                    const del = smallBtn('🗑 Elimina');
+                    del.addEventListener('click', () => {
+                        openMenuId = null;
+                        if (confirm('Eliminare questo messaggio?')) sendAction('delete_message', { messageId: m.id });
+                        refreshMessages();
+                    });
+                    menu.appendChild(del);
+                }
+                row.appendChild(menu);
+                if (pickerOpenId === m.id) {
+                    const picker = document.createElement('div');
+                    picker.style.cssText = 'margin-top:3px;padding:4px;border:1px solid #808080;background:#f4f2ee;max-width:320px;';
+                    const typed = document.createElement('input');
+                    typed.type = 'text';
+                    typed.placeholder = 'Scrivi o incolla un\'emoji…';
+                    typed.style.cssText = inputStyle() + 'width:100%;box-sizing:border-box;margin-bottom:4px;';
+                    const send = (em) => {
+                        em = firstGrapheme(em);
+                        if (!em) return;
+                        openMenuId = null; pickerOpenId = null;
+                        sendAction('react_message', { messageId: m.id, emoji: em });
+                        refreshMessages();
+                    };
+                    typed.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(typed.value); });
+                    typed.addEventListener('input', () => { if (firstGrapheme(typed.value) && /\p{Extended_Pictographic}/u.test(typed.value)) send(typed.value); });
+                    picker.appendChild(typed);
+                    const grid = document.createElement('div');
+                    grid.style.cssText = 'max-height:150px;overflow-y:auto;line-height:1.3;';
+                    allEmojis().forEach(em => {
+                        const c = document.createElement('span');
+                        c.textContent = em;
+                        c.style.cssText = 'display:inline-block;width:28px;text-align:center;cursor:pointer;font-size:18px;user-select:none;';
+                        c.addEventListener('click', () => send(em));
+                        grid.appendChild(c);
+                    });
+                    picker.appendChild(grid);
+                    row.appendChild(picker);
+                    setTimeout(() => typed.focus && typed.focus(), 0);
+                }
+            }
             return row;
+        }
+        // Re-render the list while one message is being edited (refreshMessages would defer)
+        function renderEditing() {
+            if (!msgAreaEl) return;
+            const top = msgAreaEl.scrollTop;
+            msgAreaEl.innerHTML = '';
+            currentMessages().forEach(m => msgAreaEl.appendChild(renderMessageRow(m)));
+            msgAreaEl.scrollTop = top;
         }
 
         // ---- Server message handling ----
@@ -913,7 +1092,7 @@
                     if (t.type === 'dm') {
                         if (!dms[t.withUsername]) dms[t.withUsername] = { withUsername: t.withUsername, messages: [] };
                         dms[t.withUsername].messages.push(msg.message);
-                        if (activeView && activeView.type === 'dm' && activeView.withUsername === t.withUsername) renderMain();
+                        if (activeView && activeView.type === 'dm' && activeView.withUsername === t.withUsername) refreshMessages(msg.message.from === myUsername);
                         else if (selectedServerId === null) renderList();
                     } else if (t.type === 'channel') {
                         const server = servers[t.serverId];
@@ -921,7 +1100,31 @@
                             const ch = server.channels.find(c => c.id === t.channelId);
                             if (ch) ch.messages.push(msg.message);
                         }
-                        if (activeView && activeView.type === 'channel' && activeView.channelId === t.channelId) renderMain();
+                        if (activeView && activeView.type === 'channel' && activeView.channelId === t.channelId) refreshMessages(msg.message.from === myUsername);
+                    }
+                    break;
+                }
+
+                case 'message_updated':
+                case 'message_deleted': {
+                    const t = msg.target;
+                    let list = null;
+                    if (t.type === 'dm') {
+                        list = dms[t.withUsername] && dms[t.withUsername].messages;
+                    } else if (t.type === 'channel') {
+                        const server = servers[t.serverId];
+                        const ch = server && server.channels.find(c => c.id === t.channelId);
+                        list = ch && ch.messages;
+                    }
+                    if (list) {
+                        const id = msg.type === 'message_updated' ? msg.message.id : msg.messageId;
+                        const i = list.findIndex(x => x.id === id);
+                        if (i >= 0) {
+                            if (msg.type === 'message_updated') list[i] = msg.message; else list.splice(i, 1);
+                            const same = activeView && ((t.type === 'dm' && activeView.type === 'dm' && activeView.withUsername === t.withUsername) ||
+                                (t.type === 'channel' && activeView.type === 'channel' && activeView.channelId === t.channelId));
+                            if (same) refreshMessages();
+                        }
                     }
                     break;
                 }
